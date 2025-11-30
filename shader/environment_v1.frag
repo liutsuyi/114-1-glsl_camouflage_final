@@ -20,6 +20,7 @@ uniform sampler2D u_tex1;
 uniform sampler2D u_tex2;
 uniform sampler2D u_tex3;
 uniform sampler2D u_tex4;
+uniform sampler2D u_tex5;
 
 // Focus and blur control (0..1)
 uniform float u_focus;    // 0 = front in focus, 1 = back in focus
@@ -70,24 +71,47 @@ vec3 blurDisk(sampler2D tex, vec2 uv, float radius){
 	vec2 o15 = vec2( 0.707, -0.707) * t * radius;
 	vec2 o16 = vec2( 0.923, -0.383) * t * radius;
 
-	vec3 sum = texture2D(tex, uv).rgb; // center
-	sum += texture2D(tex, uv + o1).rgb;
-	sum += texture2D(tex, uv + o2).rgb;
-	sum += texture2D(tex, uv + o3).rgb;
-	sum += texture2D(tex, uv + o4).rgb;
-	sum += texture2D(tex, uv + o5).rgb;
-	sum += texture2D(tex, uv + o6).rgb;
-	sum += texture2D(tex, uv + o7).rgb;
-	sum += texture2D(tex, uv + o8).rgb;
-	sum += texture2D(tex, uv + o9).rgb;
-	sum += texture2D(tex, uv + o10).rgb;
-	sum += texture2D(tex, uv + o11).rgb;
-	sum += texture2D(tex, uv + o12).rgb;
-	sum += texture2D(tex, uv + o13).rgb;
-	sum += texture2D(tex, uv + o14).rgb;
-	sum += texture2D(tex, uv + o15).rgb;
-	sum += texture2D(tex, uv + o16).rgb;
-	return sum / 17.0; // average (center + 16)
+	// Accumulate premultiplied color and alpha to avoid white halos from
+	// transparent texels that contain background color.
+	vec3 accumCol = vec3(0.0);
+	float accumA = 0.0;
+
+	vec4 s = texture2D(tex, uv);
+	accumCol += s.rgb * s.a;
+	accumA += s.a;
+
+	vec4 samples[16];
+	samples[0] = texture2D(tex, uv + o1);
+	samples[1] = texture2D(tex, uv + o2);
+	samples[2] = texture2D(tex, uv + o3);
+	samples[3] = texture2D(tex, uv + o4);
+	samples[4] = texture2D(tex, uv + o5);
+	samples[5] = texture2D(tex, uv + o6);
+	samples[6] = texture2D(tex, uv + o7);
+	samples[7] = texture2D(tex, uv + o8);
+	samples[8] = texture2D(tex, uv + o9);
+	samples[9] = texture2D(tex, uv + o10);
+	samples[10] = texture2D(tex, uv + o11);
+	samples[11] = texture2D(tex, uv + o12);
+	samples[12] = texture2D(tex, uv + o13);
+	samples[13] = texture2D(tex, uv + o14);
+	samples[14] = texture2D(tex, uv + o15);
+	samples[15] = texture2D(tex, uv + o16);
+
+	for(int i = 0; i < 16; i++){
+		vec4 si = samples[i];
+		accumCol += si.rgb * si.a;
+		accumA += si.a;
+	}
+
+	// If accumulated alpha is very small (fully transparent), fall back to
+	// simple average of RGB samples to avoid division by zero.
+	if(accumA > 0.001){
+		return accumCol / accumA;
+	}
+	// fallback: average RGB (no meaningful alpha)
+	vec3 avg = (texture2D(tex, uv).rgb + texture2D(tex, uv + o1).rgb + texture2D(tex, uv + o2).rgb + texture2D(tex, uv + o3).rgb + texture2D(tex, uv + o4).rgb + texture2D(tex, uv + o5).rgb + texture2D(tex, uv + o6).rgb + texture2D(tex, uv + o7).rgb + texture2D(tex, uv + o8).rgb + texture2D(tex, uv + o9).rgb + texture2D(tex, uv + o10).rgb + texture2D(tex, uv + o11).rgb + texture2D(tex, uv + o12).rgb + texture2D(tex, uv + o13).rgb + texture2D(tex, uv + o14).rgb + texture2D(tex, uv + o15).rgb + texture2D(tex, uv + o16).rgb) / 17.0;
+	return avg;
 }
 
 void main(){
@@ -105,31 +129,35 @@ void main(){
 	float offs1 = -0.02;
 	float offs2 = -0.04;
 	float offs3 = -0.06;
-	float offs4 = -0.08; // background
+	float offs4 = -0.08;
+	float offs5 = -0.10; // background (last)
 
-	// Compute normalized layer indices (0 = front, 4 = back)
+	// Compute normalized layer indices (0 = front, 5 = back)
 	float idx0 = 0.0;
 	float idx1 = 1.0;
 	float idx2 = 2.0;
 	float idx3 = 3.0;
 	float idx4 = 4.0;
+	float idx5 = 5.0;
 
 	// sample layers with blur amount depending on distance from focus
-	// Map u_focus (0..1) to layer index space (0..4)
-	float focusIdx = mix(0.0, 4.0, clamp(u_focus, 0.0, 1.0));
+	// Map u_focus (0..1) to layer index space (0..5)
+	float focusIdx = mix(0.0, 5.0, clamp(u_focus, 0.0, 1.0));
 	float maxRadiusPixels = mix(0.0, 30.0, clamp(u_maxBlur, 0.0, 1.0));
 
-	float d4 = abs(idx4 - focusIdx) / 4.0;
-	float d3 = abs(idx3 - focusIdx) / 4.0;
-	float d2 = abs(idx2 - focusIdx) / 4.0;
-	float d1 = abs(idx1 - focusIdx) / 4.0;
-	float d0 = abs(idx0 - focusIdx) / 4.0;
+	float d5 = abs(idx5 - focusIdx) / 5.0;
+	float d4 = abs(idx4 - focusIdx) / 5.0;
+	float d3 = abs(idx3 - focusIdx) / 5.0;
+	float d2 = abs(idx2 - focusIdx) / 5.0;
+	float d1 = abs(idx1 - focusIdx) / 5.0;
+	float d0 = abs(idx0 - focusIdx) / 5.0;
 
 	float r0 = d0 * maxRadiusPixels;
 	float r1 = d1 * maxRadiusPixels;
 	float r2 = d2 * maxRadiusPixels;
 	float r3 = d3 * maxRadiusPixels;
 	float r4 = d4 * maxRadiusPixels;
+	float r5 = d5 * maxRadiusPixels;
 
 	// Also sample raw (non-blurred) textures to obtain reliable alpha for masking
 	vec4 s0_raw = texture2D(u_tex0, uv);
@@ -137,12 +165,13 @@ void main(){
 	vec4 s2_raw = texture2D(u_tex2, uv);
 	vec4 s3_raw = texture2D(u_tex3, uv);
 	vec4 s4_raw = texture2D(u_tex4, uv);
-
+	vec4 s5_raw = texture2D(u_tex5, uv);
 	vec3 c0 = blurDisk(u_tex0, uv, r0);
 	vec3 c1 = blurDisk(u_tex1, uv, r1);
 	vec3 c2 = blurDisk(u_tex2, uv, r2);
 	vec3 c3 = blurDisk(u_tex3, uv, r3);
 	vec3 c4 = blurDisk(u_tex4, uv, r4);
+	vec3 c5 = blurDisk(u_tex5, uv, r5);
 
 	// background starts as last texture
 	vec3 outCol = c4;
@@ -154,7 +183,10 @@ void main(){
 		return;
 	}
 
-	// composite back-to-front (so front overlays on top)
+	// composite back-to-front (so front overlays on top): start from last (c5)
+	float a4 = layerMask(s4_raw, baseThreshold + offs4, baseSoftness);
+	outCol = mix(c5, c4, a4);
+
 	float a3 = layerMask(s3_raw, baseThreshold + offs3, baseSoftness);
 	outCol = mix(outCol, c3, a3);
 
