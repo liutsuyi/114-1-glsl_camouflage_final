@@ -22,7 +22,7 @@
 
 <body>
   <canvas id="glslCanvas" data-fragment-url="shader/environment_v1.frag" width="900" height="600"
-    data-textures="data/DSC04309.JPG,data/DSC04309.JPG,data/DSC04309.JPG,data/DSC04309.JPG,data/DSC04309.JPG"></canvas>
+    data-textures="data/1_Foreground_alpha.png,data/2_Mid-Foreground_alpha.png,data/3_Midground_alpha.png,data/4_Back-Midground_alpha.png,data/5_Background.png"></canvas>
 
   <!-- UI: focus & max blur sliders -->
   <div id="ui" style="position:fixed;right:18px;top:18px;color:#fff;font-family:sans-serif;z-index:10">
@@ -31,6 +31,9 @@
     </div>
     <div>
       <label>Max Blur: <input id="maxBlurSlider" type="range" min="0" max="1" step="0.01" value="0.5"></label>
+    </div>
+    <div style="margin-top:8px">
+      <label><input id="debugMask" type="checkbox"> Show Masks (debug)</label>
     </div>
   </div>
 </body>
@@ -52,10 +55,12 @@
     sandbox.setUniform('u_focus', parseFloat(focusSlider.value));
     // max blur scale: 0..1 mapped in shader to a sensible pixel radius
     sandbox.setUniform('u_maxBlur', parseFloat(maxBlurSlider.value));
+    sandbox.setUniform('u_debug', document.getElementById('debugMask').checked ? 1.0 : 0.0);
   }
 
   focusSlider.addEventListener('input', updateUniforms);
   maxBlurSlider.addEventListener('input', updateUniforms);
+  document.getElementById('debugMask').addEventListener('change', updateUniforms);
   // set initial values
   updateUniforms();
 </script>

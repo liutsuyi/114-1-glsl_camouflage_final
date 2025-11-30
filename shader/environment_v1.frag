@@ -25,6 +25,7 @@ uniform sampler2D u_tex4;
 // Focus and blur control (0..1)
 uniform float u_focus;    // 0 = front in focus, 1 = back in focus
 uniform float u_maxBlur;  // normalized 0..1, scaled inside shader to pixels
+uniform float u_debug;    // if >0.5, visualize layer alpha masks for debugging
 
 // Luminance helper
 float lum(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
@@ -32,8 +33,17 @@ float lum(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
 // Compute a stylized mask from a layer color. The mask uses luminance and allows
 // a threshold + softness to create a paper-cut look. We invert luminance so that
 // darker pixels become more opaque by default (useful when foreground art is darker).
-float layerMask(vec3 col, float threshold, float softness){
-	float L = lum(col);
+// Prefer alpha channel for mask when available; otherwise fall back to luminance-based mask
+float layerMask(vec4 samp, float threshold, float softness){
+	float a = samp.a;
+	// If alpha contains transparency (some pixels < 1.0) we use it as mask.
+	// If alpha is effectively fully opaque (>= 0.99) we assume the texture
+	// does not provide a meaningful alpha mask and fall back to luminance.
+	if(a < 0.99) {
+		return a;
+	}
+	// otherwise fall back to inverted luminance method
+	float L = lum(samp.rgb);
 	float inv = 1.0 - L; // darker -> closer to 1
 	return smoothstep(threshold - softness, threshold + softness, inv);
 }
@@ -98,6 +108,13 @@ void main(){
 	float r3 = d3 * maxRadiusPixels;
 	float r4 = d4 * maxRadiusPixels;
 
+	// Also sample raw (non-blurred) textures to obtain reliable alpha for masking
+	vec4 s0_raw = texture2D(u_tex0, uv);
+	vec4 s1_raw = texture2D(u_tex1, uv);
+	vec4 s2_raw = texture2D(u_tex2, uv);
+	vec4 s3_raw = texture2D(u_tex3, uv);
+	vec4 s4_raw = texture2D(u_tex4, uv);
+
 	vec3 c0 = blur9(u_tex0, uv, r0);
 	vec3 c1 = blur9(u_tex1, uv, r1);
 	vec3 c2 = blur9(u_tex2, uv, r2);
@@ -107,17 +124,24 @@ void main(){
 	// background starts as last texture
 	vec3 outCol = c4;
 
+	// Debug: visualize alpha masks (R=layer0, G=layer1, B=layer2)
+	if(u_debug > 0.5) {
+		vec3 dbg = vec3(s0_raw.a, s1_raw.a, s2_raw.a);
+		gl_FragColor = vec4(dbg, 1.0);
+		return;
+	}
+
 	// composite back-to-front (so front overlays on top)
-	float a3 = layerMask(c3, baseThreshold + offs3, baseSoftness);
+	float a3 = layerMask(s3_raw, baseThreshold + offs3, baseSoftness);
 	outCol = mix(outCol, c3, a3);
 
-	float a2 = layerMask(c2, baseThreshold + offs2, baseSoftness);
+	float a2 = layerMask(s2_raw, baseThreshold + offs2, baseSoftness);
 	outCol = mix(outCol, c2, a2);
 
-	float a1 = layerMask(c1, baseThreshold + offs1, baseSoftness);
+	float a1 = layerMask(s1_raw, baseThreshold + offs1, baseSoftness);
 	outCol = mix(outCol, c1, a1);
 
-	float a0 = layerMask(c0, baseThreshold + offs0, baseSoftness);
+	float a0 = layerMask(s0_raw, baseThreshold + offs0, baseSoftness);
 	outCol = mix(outCol, c0, a0);
 
 	gl_FragColor = vec4(outCol, 1.0);
