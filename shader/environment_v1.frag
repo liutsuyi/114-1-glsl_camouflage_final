@@ -22,6 +22,10 @@ uniform sampler2D u_tex2;
 uniform sampler2D u_tex3;
 uniform sampler2D u_tex4;
 
+// Focus and blur control (0..1)
+uniform float u_focus;    // 0 = front in focus, 1 = back in focus
+uniform float u_maxBlur;  // normalized 0..1, scaled inside shader to pixels
+
 // Luminance helper
 float lum(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
 
@@ -34,6 +38,24 @@ float layerMask(vec3 col, float threshold, float softness){
 	return smoothstep(threshold - softness, threshold + softness, inv);
 }
 
+// simple 9-tap blur around uv; radius is in pixels
+vec3 blur9(sampler2D tex, vec2 uv, float radius){
+	if(radius <= 0.5) return texture2D(tex, uv).rgb;
+	vec2 texel = 1.0 / u_resolution;
+	vec3 c = vec3(0.0);
+	// center heavier weight
+	c += texture2D(tex, uv).rgb * 4.0;
+	c += texture2D(tex, uv + vec2(texel.x,0.0) * radius).rgb;
+	c += texture2D(tex, uv - vec2(texel.x,0.0) * radius).rgb;
+	c += texture2D(tex, uv + vec2(0.0,texel.y) * radius).rgb;
+	c += texture2D(tex, uv - vec2(0.0,texel.y) * radius).rgb;
+	c += texture2D(tex, uv + vec2(texel.x,texel.y) * radius).rgb;
+	c += texture2D(tex, uv + vec2(-texel.x,texel.y) * radius).rgb;
+	c += texture2D(tex, uv + vec2(texel.x,-texel.y) * radius).rgb;
+	c += texture2D(tex, uv + vec2(-texel.x,-texel.y) * radius).rgb;
+	return c / 12.0;
+}
+
 void main(){
 	vec2 uv = gl_FragCoord.xy / u_resolution.xy;
 
@@ -44,19 +66,43 @@ void main(){
 	float baseThreshold = mix(0.35, 0.7, mx); // left -> small threshold, right -> larger fill
 	float baseSoftness = mix(0.02, 0.18, my);
 
+
 	// per-layer offset so each layer can have slightly different cut
 	float offs0 = 0.00; // front
 	float offs1 = -0.02;
 	float offs2 = -0.04;
 	float offs3 = -0.06;
-	float offs4 = -0.08; // background (usually kept filled)
+	float offs4 = -0.08; // background
 
-	// sample layers (assume they all have same UV layout)
-	vec3 c0 = texture2D(u_tex0, uv).rgb;
-	vec3 c1 = texture2D(u_tex1, uv).rgb;
-	vec3 c2 = texture2D(u_tex2, uv).rgb;
-	vec3 c3 = texture2D(u_tex3, uv).rgb;
-	vec3 c4 = texture2D(u_tex4, uv).rgb;
+	// Compute normalized layer indices (0 = front, 4 = back)
+	float idx0 = 0.0;
+	float idx1 = 1.0;
+	float idx2 = 2.0;
+	float idx3 = 3.0;
+	float idx4 = 4.0;
+
+	// sample layers with blur amount depending on distance from focus
+	// Map u_focus (0..1) to layer index space (0..4)
+	float focusIdx = mix(0.0, 4.0, clamp(u_focus, 0.0, 1.0));
+	float maxRadiusPixels = mix(0.0, 30.0, clamp(u_maxBlur, 0.0, 1.0));
+
+	float d4 = abs(idx4 - focusIdx) / 4.0;
+	float d3 = abs(idx3 - focusIdx) / 4.0;
+	float d2 = abs(idx2 - focusIdx) / 4.0;
+	float d1 = abs(idx1 - focusIdx) / 4.0;
+	float d0 = abs(idx0 - focusIdx) / 4.0;
+
+	float r0 = d0 * maxRadiusPixels;
+	float r1 = d1 * maxRadiusPixels;
+	float r2 = d2 * maxRadiusPixels;
+	float r3 = d3 * maxRadiusPixels;
+	float r4 = d4 * maxRadiusPixels;
+
+	vec3 c0 = blur9(u_tex0, uv, r0);
+	vec3 c1 = blur9(u_tex1, uv, r1);
+	vec3 c2 = blur9(u_tex2, uv, r2);
+	vec3 c3 = blur9(u_tex3, uv, r3);
+	vec3 c4 = blur9(u_tex4, uv, r4);
 
 	// background starts as last texture
 	vec3 outCol = c4;
