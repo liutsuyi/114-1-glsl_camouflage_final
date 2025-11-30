@@ -12,7 +12,6 @@ precision mediump float;
 #endif
 
 uniform vec2 u_resolution;
-uniform vec2 u_mouse;
 uniform float u_time;
 
 // Textures: u_tex0 is front-most, u_tex4 is background (last)
@@ -48,33 +47,57 @@ float layerMask(vec4 samp, float threshold, float softness){
 	return smoothstep(threshold - softness, threshold + softness, inv);
 }
 
-// simple 9-tap blur around uv; radius is in pixels
-vec3 blur9(sampler2D tex, vec2 uv, float radius){
+// Disk-like multi-sample blur (~16 samples) for more uniform, circular bokeh.
+// radius is in pixels. This samples points on a circle and averages them.
+vec3 blurDisk(sampler2D tex, vec2 uv, float radius){
 	if(radius <= 0.5) return texture2D(tex, uv).rgb;
-	vec2 texel = 1.0 / u_resolution;
-	vec3 c = vec3(0.0);
-	// center heavier weight
-	c += texture2D(tex, uv).rgb * 4.0;
-	c += texture2D(tex, uv + vec2(texel.x,0.0) * radius).rgb;
-	c += texture2D(tex, uv - vec2(texel.x,0.0) * radius).rgb;
-	c += texture2D(tex, uv + vec2(0.0,texel.y) * radius).rgb;
-	c += texture2D(tex, uv - vec2(0.0,texel.y) * radius).rgb;
-	c += texture2D(tex, uv + vec2(texel.x,texel.y) * radius).rgb;
-	c += texture2D(tex, uv + vec2(-texel.x,texel.y) * radius).rgb;
-	c += texture2D(tex, uv + vec2(texel.x,-texel.y) * radius).rgb;
-	c += texture2D(tex, uv + vec2(-texel.x,-texel.y) * radius).rgb;
-	return c / 12.0;
+	vec2 t = 1.0 / u_resolution;
+	// 16 sample offsets (angles around circle), scaled by radius
+	vec2 o1  = vec2( 1.000,  0.000) * t * radius;
+	vec2 o2  = vec2( 0.923,  0.383) * t * radius;
+	vec2 o3  = vec2( 0.707,  0.707) * t * radius;
+	vec2 o4  = vec2( 0.383,  0.923) * t * radius;
+	vec2 o5  = vec2( 0.000,  1.000) * t * radius;
+	vec2 o6  = vec2(-0.383,  0.923) * t * radius;
+	vec2 o7  = vec2(-0.707,  0.707) * t * radius;
+	vec2 o8  = vec2(-0.923,  0.383) * t * radius;
+	vec2 o9  = vec2(-1.000,  0.000) * t * radius;
+	vec2 o10 = vec2(-0.923, -0.383) * t * radius;
+	vec2 o11 = vec2(-0.707, -0.707) * t * radius;
+	vec2 o12 = vec2(-0.383, -0.923) * t * radius;
+	vec2 o13 = vec2( 0.000, -1.000) * t * radius;
+	vec2 o14 = vec2( 0.383, -0.923) * t * radius;
+	vec2 o15 = vec2( 0.707, -0.707) * t * radius;
+	vec2 o16 = vec2( 0.923, -0.383) * t * radius;
+
+	vec3 sum = texture2D(tex, uv).rgb; // center
+	sum += texture2D(tex, uv + o1).rgb;
+	sum += texture2D(tex, uv + o2).rgb;
+	sum += texture2D(tex, uv + o3).rgb;
+	sum += texture2D(tex, uv + o4).rgb;
+	sum += texture2D(tex, uv + o5).rgb;
+	sum += texture2D(tex, uv + o6).rgb;
+	sum += texture2D(tex, uv + o7).rgb;
+	sum += texture2D(tex, uv + o8).rgb;
+	sum += texture2D(tex, uv + o9).rgb;
+	sum += texture2D(tex, uv + o10).rgb;
+	sum += texture2D(tex, uv + o11).rgb;
+	sum += texture2D(tex, uv + o12).rgb;
+	sum += texture2D(tex, uv + o13).rgb;
+	sum += texture2D(tex, uv + o14).rgb;
+	sum += texture2D(tex, uv + o15).rgb;
+	sum += texture2D(tex, uv + o16).rgb;
+	return sum / 17.0; // average (center + 16)
 }
 
 void main(){
 	vec2 uv = gl_FragCoord.xy / u_resolution.xy;
 
-	// interactive controls via mouse
-	float mx = clamp(u_mouse.x / u_resolution.x, 0.0, 1.0);
-	float my = clamp(u_mouse.y / u_resolution.y, 0.0, 1.0);
-	// base threshold and softness derived from mouse position
-	float baseThreshold = mix(0.35, 0.7, mx); // left -> small threshold, right -> larger fill
-	float baseSoftness = mix(0.02, 0.18, my);
+	// Mouse-driven controls removed. Use fixed threshold/softness suitable
+	// for paper-cut style. If you want to expose these controls, we can
+	// convert them to uniforms and add UI sliders.
+	float baseThreshold = 0.50;
+	float baseSoftness = 0.06;
 
 
 	// per-layer offset so each layer can have slightly different cut
@@ -115,11 +138,11 @@ void main(){
 	vec4 s3_raw = texture2D(u_tex3, uv);
 	vec4 s4_raw = texture2D(u_tex4, uv);
 
-	vec3 c0 = blur9(u_tex0, uv, r0);
-	vec3 c1 = blur9(u_tex1, uv, r1);
-	vec3 c2 = blur9(u_tex2, uv, r2);
-	vec3 c3 = blur9(u_tex3, uv, r3);
-	vec3 c4 = blur9(u_tex4, uv, r4);
+	vec3 c0 = blurDisk(u_tex0, uv, r0);
+	vec3 c1 = blurDisk(u_tex1, uv, r1);
+	vec3 c2 = blurDisk(u_tex2, uv, r2);
+	vec3 c3 = blurDisk(u_tex3, uv, r3);
+	vec3 c4 = blurDisk(u_tex4, uv, r4);
 
 	// background starts as last texture
 	vec3 outCol = c4;
