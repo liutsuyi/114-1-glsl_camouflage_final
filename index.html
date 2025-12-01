@@ -118,6 +118,8 @@
     <div style="margin-bottom:8px">
       <label>Focus: <input id="focusSlider" type="range" min="0" max="1" step="0.01" value="0.0"></label>
     </div>
+    <!-- Texture Set selector 暫時註解，不顯示也不執行；如需恢復，移除下方註解即可 -->
+    <!--
     <div style="margin-bottom:8px">
       <label>Texture Set: 
         <select id="textureSetSelect">
@@ -127,6 +129,7 @@
       </label>
       <div style="font-size:12px;color:#ccc" id="textureSetNote">Using Set 1</div>
     </div>
+    -->
     <div>
       <label>Max Blur: <input id="maxBlurSlider" type="range" min="0" max="1" step="0.01" value="0.5"></label>
     </div>
@@ -148,6 +151,7 @@
   var focusSlider = document.getElementById('focusSlider');
   var maxBlurSlider = document.getElementById('maxBlurSlider');
 
+  /* Texture Set 功能暫時註解掉；如需恢復方便，可以移除這個區塊的註解。
   // Texture set selector
   var textureSetSelect = document.getElementById('textureSetSelect');
   var textureSetNote = document.getElementById('textureSetNote');
@@ -172,6 +176,7 @@
   }
 
   textureSetSelect.addEventListener('change', function(){ applyTextureSet(this.value); });
+  */
 
   function updateUniforms(){
     // focus: 0 = front in focus, 1 = back in focus
@@ -185,8 +190,16 @@
   focusSlider.addEventListener('input', updateUniforms);
   maxBlurSlider.addEventListener('input', updateUniforms);
   // set initial values
-  // apply initial texture set then uniforms
-  applyTextureSet(textureSetSelect.value || 0);
+  // Texture Set 功能已暫時註解；改用原始 data-textures 並套用 uniforms
+  // applyTextureSet(textureSetSelect.value || 0);
+  // 將 data-textures 內的貼圖載入 canvas（原本 applyTextureSet 會做的事）
+  (function loadInitialTextures(){
+    var list = (canvas.getAttribute('data-textures') || '').split(',').filter(function(t){ return t !== ''; });
+    for(var i=0;i<list.length;i++){
+      sandbox.setUniform('u_tex'+i, list[i]);
+    }
+    updateUniforms();
+  })();
 
   // Position UI to be vertically centered and fixed to the canvas left edge.
   function positionUI(){
