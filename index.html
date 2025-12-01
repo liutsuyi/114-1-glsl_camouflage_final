@@ -138,6 +138,10 @@
       <div class="small">狐狸寬度佔畫布寬度： <span id="foxSizeLabel">18%</span></div>
     </div>
     <div style="margin-top:8px">
+      <label>Fox Feather: <input id="foxFeatherSlider" type="range" min="0" max="40" step="1" value="2"></label>
+      <div class="small">狐狸邊緣羽化（像素）: <span id="foxFeatherLabel">2px</span></div>
+    </div>
+    <div style="margin-top:8px">
       <label style="display:flex;align-items:center;gap:8px"><input id="foxOverlayToggle" type="checkbox" checked> <span style="font-weight:500">Fox Overlay</span></label>
       <div class="small">若勾選，狐狸會以 overlay 方式渲染於最前方，確保可見。</div>
     </div>
@@ -228,15 +232,37 @@
       // draw the image as-is (preserve alpha) into the canvas
       ctx.drawImage(img, 0, 0, c.width, c.height);
       try{
+        // Premultiply RGB by alpha on the canvas to remove white/colour fringing
+        try{
+          var imgData = ctx.getImageData(0,0,c.width,c.height);
+          var d = imgData.data;
+          for(var i=0;i<d.length;i+=4){
+            var a = d[i+3] / 255;
+            d[i] = Math.round(d[i] * a);
+            d[i+1] = Math.round(d[i+1] * a);
+            d[i+2] = Math.round(d[i+2] * a);
+          }
+          ctx.putImageData(imgData, 0, 0);
+        }catch(e){
+          // if getImageData is blocked by CORS, ignore and continue (we still upload the canvas)
+          console.warn('Unable to premultiply image pixels (CORS):', e);
+        }
+      }catch(e){
+        console.warn('Premultiply step failed:', e);
+      }
+      try{
         // Use dataURL string to avoid passing complex DOM objects into GlslCanvas
         // (some implementations may try to parse objects and recurse).
         var dataUrl = c.toDataURL('image/png');
         sandbox.setUniform('u_fox', dataUrl);
         console.log('u_fox uploaded from canvas (dataURL):', c.width, 'x', c.height);
+        // also provide texture resolution to shader so we can preserve aspect ratio
+        sandbox.setUniform('u_foxResolution', c.width, c.height);
       }catch(e){
         // Fallback: if toDataURL fails (cross-origin / security), fall back to image element
         console.warn('toDataURL failed, falling back to image element:', e);
         sandbox.setUniform('u_fox', img);
+        sandbox.setUniform('u_foxResolution', img.naturalWidth || img.width, img.naturalHeight || img.height);
       }
     };
     img.onerror = function(e){
@@ -280,6 +306,19 @@
       var v = parseFloat(this.value);
       sandbox.setUniform('u_foxSize', v);
       if(foxSizeLabel) foxSizeLabel.textContent = Math.round(v * 100) + '%';
+    });
+  }
+  // Fox feather slider wiring
+  var foxFeatherSlider = document.getElementById('foxFeatherSlider');
+  var foxFeatherLabel = document.getElementById('foxFeatherLabel');
+  if(foxFeatherSlider){
+    var fv = parseFloat(foxFeatherSlider.value);
+    sandbox.setUniform('u_foxFeather', fv);
+    if(foxFeatherLabel) foxFeatherLabel.textContent = fv + 'px';
+    foxFeatherSlider.addEventListener('input', function(){
+      var fv = parseFloat(this.value);
+      sandbox.setUniform('u_foxFeather', fv);
+      if(foxFeatherLabel) foxFeatherLabel.textContent = fv + 'px';
     });
   }
 

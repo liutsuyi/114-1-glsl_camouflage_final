@@ -35,10 +35,12 @@ uniform float u_maxBlur;  // normalized 0..1, scaled inside shader to pixels
 uniform float u_debug;    // if >0.5, visualize layer alpha masks for debugging
 // 新增狐狸貼圖與滑鼠 / 大小 / 層級 uniforms
 uniform sampler2D u_fox;  // 狐狸貼圖（帶 alpha）
+uniform vec2 u_foxResolution; // width,height of the fox texture in pixels
 uniform vec2 u_mouse;     // GlslCanvas 會自動填入滑鼠座標（像素空間）
 uniform float u_foxSize;  // 狐狸顯示寬度相對於畫布寬度 (可大於1.0)
 uniform float u_foxLayer; // 狐狸所在圖層索引：0 = 最前景, 5 = 最背後
 uniform float u_foxOverlay; // if >0.5 draw fox as overlay after all layers
+uniform float u_foxFeather; // feather radius in pixels for soft edges
 
 // Luminance helper (保留以備未來需要，但目前透明判斷僅使用 alpha)
 float lum(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
@@ -82,12 +84,44 @@ float foxMaskAdjusted(vec4 foxS){
 	return fa;
 }
 
+// Feathered mask sampling: blur alpha around local uv using 3x3 kernel scaled by u_foxFeather
+float foxMaskFeathered(vec2 local){
+	// compute base mask from foxMaskAdjusted at center
+	float base = foxMaskAdjusted(texture2D(u_fox, local));
+	if(u_foxFeather <= 0.5) return base;
+	// convert feather px to UV space (use max dimension for roughly isotropic radius)
+	float maxDim = max(u_foxResolution.x, u_foxResolution.y);
+	float radiusUV = u_foxFeather / maxDim;
+	// 3x3 sample offsets
+	vec2 offs[9];
+	offs[0] = vec2(-1.0, -1.0) * radiusUV;
+	offs[1] = vec2( 0.0, -1.0) * radiusUV;
+	offs[2] = vec2( 1.0, -1.0) * radiusUV;
+	offs[3] = vec2(-1.0,  0.0) * radiusUV;
+	offs[4] = vec2( 0.0,  0.0) * radiusUV;
+	offs[5] = vec2( 1.0,  0.0) * radiusUV;
+	offs[6] = vec2(-1.0,  1.0) * radiusUV;
+	offs[7] = vec2( 0.0,  1.0) * radiusUV;
+	offs[8] = vec2( 1.0,  1.0) * radiusUV;
+	float sum = 0.0;
+	for(int i=0;i<9;i++){
+		vec4 s = texture2D(u_fox, local + offs[i]);
+		// use foxMaskAdjusted on each sample so premultiplied/brightness fallback is respected
+		sum += foxMaskAdjusted(s);
+	}
+	float aBlur = sum / 9.0;
+	// return the blurred mask (so color will be multiplied by this soft alpha)
+	return aBlur;
+}
+
 // 計算狐狸貼圖的 local (0..1) 座標，使用像素空間的尺寸計算以避免寬高比錯誤
 vec2 foxLocalFromFragCoord(vec2 fragCoord){
 	// 使用像素空間計算：fragCoord 和 u_mouse 都是以 drawingbuffer pixels 傳入
 	// u_foxSize 表示狐狸寬度佔畫布寬度的比例（例如 0.2 = 20% 畫布寬度）
 	float foxPixelW = max(u_foxSize * u_resolution.x, 1.0);
-	float foxPixelH = foxPixelW; // 使用方形的採樣框
+	// preserve texture aspect ratio: height = width * (texHeight/texWidth)
+	float aspect = (u_foxResolution.x > 0.0 && u_foxResolution.y > 0.0) ? (u_foxResolution.x / u_foxResolution.y) : 1.0;
+	float foxPixelH = max(foxPixelW / aspect, 1.0);
 	vec2 local = (fragCoord - u_mouse) / vec2(foxPixelW, foxPixelH) + vec2(0.5);
 	return local;
 }
@@ -237,9 +271,10 @@ void main(){
 		vec2 local = foxLocalFromFragCoord(gl_FragCoord.xy);
 		if(local.x >= 0.0 && local.x <= 1.0 && local.y >= 0.0 && local.y <= 1.0){
 			vec4 foxS = texture2D(u_fox, local);
-			float fa = foxMaskAdjusted(foxS);
-			vec3 foxColor = foxS.a > 0.0001 ? foxS.rgb / foxS.a : foxS.rgb;
-			outCol = foxColor * fa + outCol * (1.0 - fa);
+			float fa = foxMaskFeathered(local);
+			vec3 unprem = (foxS.a > 0.0001) ? (foxS.rgb / foxS.a) : foxS.rgb;
+			vec3 srcPremult = unprem * fa;
+			outCol = srcPremult + outCol * (1.0 - fa);
 			outA = fa + outA * (1.0 - fa);
 		}
 	}
@@ -250,11 +285,12 @@ void main(){
 	if(u_foxLayer == 3.0){
 			vec2 local = foxLocalFromFragCoord(gl_FragCoord.xy);
 		if(local.x >= 0.0 && local.x <= 1.0 && local.y >= 0.0 && local.y <= 1.0){
-			vec4 foxS = texture2D(u_fox, local);
-				float fa = foxMaskAdjusted(foxS);
-			vec3 foxColor = foxS.a > 0.0001 ? foxS.rgb / foxS.a : foxS.rgb;
-			outCol = foxColor * fa + outCol * (1.0 - fa);
-			outA = fa + outA * (1.0 - fa);
+				vec4 foxS = texture2D(u_fox, local);
+				float fa = foxMaskFeathered(local);
+				vec3 unprem = (foxS.a > 0.0001) ? (foxS.rgb / foxS.a) : foxS.rgb;
+				vec3 srcPremult = unprem * fa;
+				outCol = srcPremult + outCol * (1.0 - fa);
+				outA = fa + outA * (1.0 - fa);
 		}
 	}
 
@@ -264,11 +300,12 @@ void main(){
 	if(u_foxLayer == 2.0){
 			vec2 local = foxLocalFromFragCoord(gl_FragCoord.xy);
 		if(local.x >= 0.0 && local.x <= 1.0 && local.y >= 0.0 && local.y <= 1.0){
-			vec4 foxS = texture2D(u_fox, local);
-				float fa = foxMaskAdjusted(foxS);
-			vec3 foxColor = foxS.a > 0.0001 ? foxS.rgb / foxS.a : foxS.rgb;
-			outCol = foxColor * fa + outCol * (1.0 - fa);
-			outA = fa + outA * (1.0 - fa);
+				vec4 foxS = texture2D(u_fox, local);
+				float fa = foxMaskFeathered(local);
+				vec3 unprem = (foxS.a > 0.0001) ? (foxS.rgb / foxS.a) : foxS.rgb;
+				vec3 srcPremult = unprem * fa;
+				outCol = srcPremult + outCol * (1.0 - fa);
+				outA = fa + outA * (1.0 - fa);
 		}
 	}
 
@@ -278,11 +315,12 @@ void main(){
 	if(u_foxLayer == 1.0){
 			vec2 local = foxLocalFromFragCoord(gl_FragCoord.xy);
 		if(local.x >= 0.0 && local.x <= 1.0 && local.y >= 0.0 && local.y <= 1.0){
-			vec4 foxS = texture2D(u_fox, local);
-				float fa = foxMaskAdjusted(foxS);
-			vec3 foxColor = foxS.a > 0.0001 ? foxS.rgb / foxS.a : foxS.rgb;
-			outCol = foxColor * fa + outCol * (1.0 - fa);
-			outA = fa + outA * (1.0 - fa);
+				vec4 foxS = texture2D(u_fox, local);
+				float fa = foxMaskFeathered(local);
+				vec3 unprem = (foxS.a > 0.0001) ? (foxS.rgb / foxS.a) : foxS.rgb;
+				vec3 srcPremult = unprem * fa;
+				outCol = srcPremult + outCol * (1.0 - fa);
+				outA = fa + outA * (1.0 - fa);
 		}
 	}
 
@@ -292,11 +330,12 @@ void main(){
 	if(u_foxLayer == 0.0){
 			vec2 local = foxLocalFromFragCoord(gl_FragCoord.xy);
 		if(local.x >= 0.0 && local.x <= 1.0 && local.y >= 0.0 && local.y <= 1.0){
-			vec4 foxS = texture2D(u_fox, local);
-				float fa = foxMaskAdjusted(foxS);
-			vec3 foxColor = foxS.a > 0.0001 ? foxS.rgb / foxS.a : foxS.rgb;
-			outCol = foxColor * fa + outCol * (1.0 - fa);
-			outA = fa + outA * (1.0 - fa);
+				vec4 foxS = texture2D(u_fox, local);
+				float fa = foxMaskFeathered(local);
+				vec3 unprem = (foxS.a > 0.0001) ? (foxS.rgb / foxS.a) : foxS.rgb;
+				vec3 srcPremult = unprem * fa;
+				outCol = srcPremult + outCol * (1.0 - fa);
+				outA = fa + outA * (1.0 - fa);
 		}
 	}
 
@@ -313,23 +352,13 @@ void main(){
 		vec2 local = foxLocalFromFragCoord(gl_FragCoord.xy);
 		if(local.x >= 0.0 && local.x <= 1.0 && local.y >= 0.0 && local.y <= 1.0){
 			vec4 foxS = texture2D(u_fox, local);
-			float fa = foxMaskAdjusted(foxS);
-			vec3 foxColor = foxS.a > 0.0001 ? foxS.rgb / foxS.a : foxS.rgb;
-			outCol = foxColor * fa + outCol * (1.0 - fa);
+			float fa = foxMaskFeathered(local);
+			vec3 srcPremult = (foxS.r <= foxS.a + 0.0001 && foxS.g <= foxS.a + 0.0001 && foxS.b <= foxS.a + 0.0001) ? foxS.rgb : foxS.rgb * fa;
+			outCol = srcPremult + outCol * (1.0 - fa);
 			outA = fa + outA * (1.0 - fa);
 		}
 	}
 
-	// Debug overlay: when u_debug > 2.9, force-draw the fox (no mask, overlay)
-	if(u_debug > 2.9){
-		vec2 local = foxLocalFromFragCoord(gl_FragCoord.xy);
-		if(local.x >= 0.0 && local.x <= 1.0 && local.y >= 0.0 && local.y <= 1.0){
-			vec4 foxS = texture2D(u_fox, local);
-			vec3 foxColor = foxS.a > 0.0001 ? foxS.rgb / foxS.a : foxS.rgb;
-			gl_FragColor = vec4(foxColor, 1.0);
-			return;
-		}
-	}
 
 	gl_FragColor = vec4(outCol, outA);
 }
