@@ -1,11 +1,18 @@
 // Author: tsuyi
 // Title: environment_v1.frag
 // Purpose: Composite up to 5 textures (front -> back) into a paper-cutting style scene.
-// Usage notes:
-// - Provide five images in `index.html` via `data-textures="data/fg.png,data/layer2.png,data/layer3.png,data/layer4.png,data/bg.png"`
-//   The order is FRONT -> ... -> BACK (u_tex0 is the first/foreground).
-// - Mouse X controls mask threshold (left = tighter cut, right = more filled).
-// - Mouse Y controls mask softness (bottom = sharp cut, top = softer blend).
+//
+// 中文說明：
+// 本 shader 將多張圖層由前景 (u_tex0) 到背景 (u_tex5) 以紙雕（paper-cut）風格合成。
+// 透明判斷：
+//  - 僅以 PNG 圖片的 alpha 通道決定透明（也就是只有貼圖本身有透明像素時才會呈現透明），
+//    不再以亮度或灰階來當作遮罩，以避免淺色區域被誤判為透明。
+//  - 若貼圖沒有 alpha（alpha == 1.0），則視為完全不透明。
+// 控制：
+//  - `u_focus` 控制景深焦點（0 = 前景清晰，1 = 背景清晰）。
+//  - `u_maxBlur` 控制最大模糊半徑（0..1，會映射到像素值）。
+//  - `u_debug` 若 > 0.5，會顯示各層 alpha 的偵錯視覺化（R=層0, G=層1, B=層2）。
+// 使用方式：在 `index.html` 的 `data-textures` 指定紋理路徑，順序為前到後 (u_tex0 ... u_tex5)。
 
 #ifdef GL_ES
 precision mediump float;
@@ -27,25 +34,15 @@ uniform float u_focus;    // 0 = front in focus, 1 = back in focus
 uniform float u_maxBlur;  // normalized 0..1, scaled inside shader to pixels
 uniform float u_debug;    // if >0.5, visualize layer alpha masks for debugging
 
-// Luminance helper
+// Luminance helper (保留以備未來需要，但目前透明判斷僅使用 alpha)
 float lum(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
 
-// Compute a stylized mask from a layer color. The mask uses luminance and allows
-// a threshold + softness to create a paper-cut look. We invert luminance so that
-// darker pixels become more opaque by default (useful when foreground art is darker).
-// Prefer alpha channel for mask when available; otherwise fall back to luminance-based mask
+// layerMask: 只以圖檔的 alpha 通道作為遮罩回傳（0 = 透明, 1 = 不透明）。
+// 這裡不再以亮度作為備援遮罩，以避免淺色被誤判為透明。
+// threshold/softness 參數保留但目前不會影響 alpha 判斷（以方便未來擴充）。
 float layerMask(vec4 samp, float threshold, float softness){
-	float a = samp.a;
-	// If alpha contains transparency (some pixels < 1.0) we use it as mask.
-	// If alpha is effectively fully opaque (>= 0.99) we assume the texture
-	// does not provide a meaningful alpha mask and fall back to luminance.
-	if(a < 0.99) {
-		return a;
-	}
-	// otherwise fall back to inverted luminance method
-	float L = lum(samp.rgb);
-	float inv = 1.0 - L; // darker -> closer to 1
-	return smoothstep(threshold - softness, threshold + softness, inv);
+	// 直接使用 alpha 值（PNG 的透明區域會有 alpha < 1.0）
+	return samp.a;
 }
 
 // Disk-like multi-sample blur (~16 samples) for more uniform, circular bokeh.
@@ -173,8 +170,10 @@ void main(){
 	vec3 c4 = blurDisk(u_tex4, uv, r4);
 	vec3 c5 = blurDisk(u_tex5, uv, r5);
 
-	// background starts as last texture
-	vec3 outCol = c4;
+	// 背景從最後一層開始 (u_tex5)
+	vec3 outCol = c5;
+	// 同時追蹤合成後的 alpha，使用原始未模糊的取樣 alpha 作為每層 alpha
+	float outA = s5_raw.a;
 
 	// Debug: visualize alpha masks (R=layer0, G=layer1, B=layer2)
 	if(u_debug > 0.5) {
@@ -183,22 +182,32 @@ void main(){
 		return;
 	}
 
-	// composite back-to-front (so front overlays on top): start from last (c5)
+	// 使用標準的 "over" 合成 (src over dst)，考慮 alpha：
+	//   out = src.rgb * src.a + dst.rgb * (1 - src.a)
+	//   outA = src.a + dst.a * (1 - src.a)
+	// 這裡 src 是較靠前的圖層 (例如 c4), dst 是目前累積的背景。
+
 	float a4 = layerMask(s4_raw, baseThreshold + offs4, baseSoftness);
-	outCol = mix(c5, c4, a4);
+	outCol = c4 * a4 + outCol * (1.0 - a4);
+	outA = a4 + outA * (1.0 - a4);
 
 	float a3 = layerMask(s3_raw, baseThreshold + offs3, baseSoftness);
-	outCol = mix(outCol, c3, a3);
+	outCol = c3 * a3 + outCol * (1.0 - a3);
+	outA = a3 + outA * (1.0 - a3);
 
 	float a2 = layerMask(s2_raw, baseThreshold + offs2, baseSoftness);
-	outCol = mix(outCol, c2, a2);
+	outCol = c2 * a2 + outCol * (1.0 - a2);
+	outA = a2 + outA * (1.0 - a2);
 
 	float a1 = layerMask(s1_raw, baseThreshold + offs1, baseSoftness);
-	outCol = mix(outCol, c1, a1);
+	outCol = c1 * a1 + outCol * (1.0 - a1);
+	outA = a1 + outA * (1.0 - a1);
 
 	float a0 = layerMask(s0_raw, baseThreshold + offs0, baseSoftness);
-	outCol = mix(outCol, c0, a0);
+	outCol = c0 * a0 + outCol * (1.0 - a0);
+	outA = a0 + outA * (1.0 - a0);
 
-	gl_FragColor = vec4(outCol, 1.0);
+	// 最後輸出包含 alpha，這樣若 canvas 被用在有背景的 context 中會正確表現透明
+	gl_FragColor = vec4(outCol, outA);
 }
 
