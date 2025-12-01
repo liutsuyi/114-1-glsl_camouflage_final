@@ -134,13 +134,25 @@
       <label>Max Blur: <input id="maxBlurSlider" type="range" min="0" max="1" step="0.01" value="0.5"></label>
     </div>
     <div style="margin-top:8px">
-      <!-- Debug checkbox removed -->
+      <label>Fox Size: <input id="foxSizeSlider" type="range" min="0.02" max="1.2" step="0.01" value="0.18"></label>
+      <div class="small">狐狸寬度佔畫布寬度： <span id="foxSizeLabel">18%</span></div>
+    </div>
+    <div style="margin-top:8px">
+      <label style="display:flex;align-items:center;gap:8px"><input id="foxOverlayToggle" type="checkbox" checked> <span style="font-weight:500">Fox Overlay</span></label>
+      <div class="small">若勾選，狐狸會以 overlay 方式渲染於最前方，確保可見。</div>
     </div>
   </div>
 </body>
 <script>
   var canvas = document.getElementById("glslCanvas");
   var sandbox = new GlslCanvas(canvas);
+  function updateFoxSpriteSize(){
+    if(!foxSprite) return;
+    var w = Math.round((canvas.clientWidth || canvas.width) * foxSizeValue);
+    foxSprite.style.width = w + 'px';
+  }
+  // Position foxSprite initial styles
+  // DOM overlay removed — fox now rendered by shader only
   var texCounter = 0;
   var sandbox_content = "";
   var sandbox_title = "";
@@ -183,8 +195,7 @@
     sandbox.setUniform('u_focus', parseFloat(focusSlider.value));
     // max blur scale: 0..1 mapped in shader to a sensible pixel radius
     sandbox.setUniform('u_maxBlur', parseFloat(maxBlurSlider.value));
-    // debug mask removed; keep debug uniform disabled
-    sandbox.setUniform('u_debug', 0.0);
+    // NOTE: 不在此覆寫 u_debug（以免開發偵錯模式被 slider 清除）
   }
 
   focusSlider.addEventListener('input', updateUniforms);
@@ -200,6 +211,128 @@
     }
     updateUniforms();
   })();
+
+  // 載入狐狸素材並設定預設大小（放在最前景）
+  // 直接使用 image 路徑可能會在上傳到 GL 時遇到 premultiplied-alpha 行為，
+  // 因此這裡改為先把圖畫到離屏 canvas，再以 canvas 作為 texture 上傳。
+  (function loadFoxToCanvas(){
+    var img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = 'data/fox_alpha.png';
+    img.onload = function(){
+      var c = document.createElement('canvas');
+      c.width = img.naturalWidth || img.width;
+      c.height = img.naturalHeight || img.height;
+      var ctx = c.getContext('2d');
+      ctx.clearRect(0,0,c.width,c.height);
+      // draw the image as-is (preserve alpha) into the canvas
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      try{
+        // Use dataURL string to avoid passing complex DOM objects into GlslCanvas
+        // (some implementations may try to parse objects and recurse).
+        var dataUrl = c.toDataURL('image/png');
+        sandbox.setUniform('u_fox', dataUrl);
+        console.log('u_fox uploaded from canvas (dataURL):', c.width, 'x', c.height);
+      }catch(e){
+        // Fallback: if toDataURL fails (cross-origin / security), fall back to image element
+        console.warn('toDataURL failed, falling back to image element:', e);
+        sandbox.setUniform('u_fox', img);
+      }
+    };
+    img.onerror = function(e){
+      console.warn('Failed to load fox image, falling back to direct path', e);
+      sandbox.setUniform('u_fox', 'data/fox_alpha.png');
+    };
+  })();
+  // u_foxSize 為狐狸佔畫布寬度比例（如 0.12 => 12% 畫布寬度）
+  // 使用者要求縮小為原先的 1/10，因此初始值設為 0.18
+  sandbox.setUniform('u_foxSize', 0.18);
+  // 初始狐狸所在圖層（0 = 最前；5 = 最後）
+  var foxLayer = 0;
+  sandbox.setUniform('u_foxLayer', foxLayer);
+  // fox overlay toggle: 1 = overlay on (draw fox after all layers), 0 = respect u_foxLayer
+  var foxOverlayToggle = document.getElementById('foxOverlayToggle');
+  sandbox.setUniform('u_foxOverlay', foxOverlayToggle && foxOverlayToggle.checked ? 1.0 : 0.0);
+  if(foxOverlayToggle){
+    foxOverlayToggle.addEventListener('change', function(){ sandbox.setUniform('u_foxOverlay', this.checked ? 1.0 : 0.0); });
+  }
+
+  // 點擊 canvas 左鍵讓狐狸往後一層（towards background）移動，超過最後一層則回到最前
+  // 目前為了 Debug 穩定性暫時停用點擊切換圖層功能：
+  /*
+  canvas.addEventListener('mousedown', function(e){
+    if(e.button === 0){
+      foxLayer = (foxLayer + 1) % 6; // 0..5
+      sandbox.setUniform('u_foxLayer', foxLayer);
+    }
+  });
+  */
+
+  // Fox size slider wiring
+  var foxSizeSlider = document.getElementById('foxSizeSlider');
+  var foxSizeLabel = document.getElementById('foxSizeLabel');
+  if(foxSizeSlider){
+    // set initial value and uniform
+    var initialFoxSize = parseFloat(foxSizeSlider.value);
+    sandbox.setUniform('u_foxSize', initialFoxSize);
+    if(foxSizeLabel) foxSizeLabel.textContent = Math.round(initialFoxSize * 100) + '%';
+    foxSizeSlider.addEventListener('input', function(){
+      var v = parseFloat(this.value);
+      sandbox.setUniform('u_foxSize', v);
+      if(foxSizeLabel) foxSizeLabel.textContent = Math.round(v * 100) + '%';
+    });
+  }
+
+  // 偵測 u_fox texture 是否有正確載入，並在載入完成時回報到 console（不要自動關閉偵錯）
+  setTimeout(function(){
+    console.log('GlslCanvas textures snapshot:', Object.keys(sandbox.textures || {}));
+    var foxTex = sandbox.textures && sandbox.textures['u_fox'];
+    if(foxTex){
+      foxTex.on('loaded', function(){
+        console.log('u_fox loaded:', foxTex.width, 'x', foxTex.height, 'src=', foxTex.source);
+      });
+      if(foxTex.width && foxTex.height){
+        console.log('u_fox already loaded:', foxTex.width, 'x', foxTex.height, 'src=', foxTex.source);
+      }
+    } else {
+      console.warn('u_fox texture not found in sandbox.textures');
+    }
+    // 不主動改變偵錯模式，由 UI 控制
+    // 在 console 顯示目前 u_mouse（pixel）以便確認
+    try{ console.log('initial u_mouse (px):', canvas.width/2, canvas.height/2); }catch(e){}
+  }, 200);
+
+  // 確保 shader 能接收到滑鼠座標：手動在 JS 層傳入 u_mouse（像素空間），
+  // 因為 GlslCanvas 只有在 shader 中出現多次 u_mouse 時才會自動更新。
+  function updateMouseUniform(e){
+    var rect = canvas.getBoundingClientRect();
+    // Map CSS mouse coordinates to the canvas drawing buffer pixel coordinates
+    // canvas.width/height are the actual drawingbuffer sizes (may be scaled by DPR)
+    var cssX = e.clientX - rect.left;
+    var cssY = e.clientY - rect.top;
+    var mx = cssX * (canvas.width / rect.width);
+    var my = canvas.height - cssY * (canvas.height / rect.height);
+    sandbox.setUniform('u_mouse', mx, my);
+    // debug log for verification
+    if(window.__mouseDebugCounter === undefined) window.__mouseDebugCounter = 0;
+    if((window.__mouseDebugCounter++ % 50) === 0){
+      console.log('u_mouse (px)=', mx.toFixed(1), my.toFixed(1), 'canvas draw size=', canvas.width, 'x', canvas.height, 'rect size=', rect.width.toFixed(1), 'x', rect.height.toFixed(1));
+    }
+  }
+  canvas.addEventListener('mousemove', updateMouseUniform);
+  // 設定初始滑鼠位置為畫布中心
+  // set initial mouse to canvas center using drawingbuffer coordinates
+  (function setInitialMouse(){
+    // Delay slightly to allow GlslCanvas to resize the drawingbuffer
+    setTimeout(function(){
+      var mx = canvas.width / 2.0;
+      var my = canvas.height / 2.0;
+      sandbox.setUniform('u_mouse', mx, my);
+      // DOM fox removed; no DOM positioning necessary
+      console.log('initial u_mouse (px)=', mx, my, 'canvas draw size=', canvas.width, 'x', canvas.height);
+    }, 100);
+  })();
+  // no DOM fox overlay to synchronize
 
   // Position UI to be vertically centered and fixed to the canvas left edge.
   function positionUI(){
