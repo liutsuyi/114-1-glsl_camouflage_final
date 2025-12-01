@@ -33,7 +33,7 @@
       <label>Max Blur: <input id="maxBlurSlider" type="range" min="0" max="1" step="0.01" value="0.5"></label>
     </div>
     <div style="margin-top:8px">
-      <label><input id="debugMask" type="checkbox"> Show Masks (debug)</label>
+      <!-- Debug checkbox removed -->
     </div>
   </div>
 </body>
@@ -55,12 +55,12 @@
     sandbox.setUniform('u_focus', parseFloat(focusSlider.value));
     // max blur scale: 0..1 mapped in shader to a sensible pixel radius
     sandbox.setUniform('u_maxBlur', parseFloat(maxBlurSlider.value));
-    sandbox.setUniform('u_debug', document.getElementById('debugMask').checked ? 1.0 : 0.0);
+    // debug mask removed; keep debug uniform disabled
+    sandbox.setUniform('u_debug', 0.0);
   }
 
   focusSlider.addEventListener('input', updateUniforms);
   maxBlurSlider.addEventListener('input', updateUniforms);
-  document.getElementById('debugMask').addEventListener('change', updateUniforms);
   // set initial values
   updateUniforms();
 </script>
