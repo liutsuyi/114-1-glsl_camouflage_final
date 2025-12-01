@@ -138,8 +138,8 @@
       <div class="small">狐狸寬度佔畫布寬度： <span id="foxSizeLabel">18%</span></div>
     </div>
     <div style="margin-top:8px">
-      <label>Fox Feather: <input id="foxFeatherSlider" type="range" min="0" max="40" step="1" value="2"></label>
-      <div class="small">狐狸邊緣羽化（像素）: <span id="foxFeatherLabel">2px</span></div>
+      <!-- Fox Feather slider removed; fixed feather value enforced in JS -->
+      <div class="small">狐狸邊緣羽化已固定為 20px（Slider 已移除）</div>
     </div>
     <div style="margin-top:8px">
       <label style="display:flex;align-items:center;gap:8px"><input id="foxOverlayToggle" type="checkbox" checked> <span style="font-weight:500">Fox Overlay</span></label>
@@ -150,6 +150,22 @@
 <script>
   var canvas = document.getElementById("glslCanvas");
   var sandbox = new GlslCanvas(canvas);
+  // Mouse-movement flip state (velocity-driven, smoothed)
+  var _prevMouseX = null;
+  var _prevTime = null;
+  var _foxFlipValue = 0.0;   // current (smoothed) flip value 0..1
+  var _foxFlipTarget = 0.0;  // desired flip target (0 or 1)
+  var _flipThreshold = 100.0; // px/s threshold to decide direction
+  var _flipSmoothing = 0.12; // 0..1 smoothing per frame (higher = faster)
+
+  function animateFoxFlip(){
+    // simple exponential / lerp smoothing each frame
+    _foxFlipValue += (_foxFlipTarget - _foxFlipValue) * _flipSmoothing;
+    // push to shader as a continuous value (shader handles mix)
+    sandbox.setUniform('u_foxFlip', _foxFlipValue);
+    requestAnimationFrame(animateFoxFlip);
+  }
+  requestAnimationFrame(animateFoxFlip);
   function updateFoxSpriteSize(){
     if(!foxSprite) return;
     var w = Math.round((canvas.clientWidth || canvas.width) * foxSizeValue);
@@ -309,18 +325,8 @@
     });
   }
   // Fox feather slider wiring
-  var foxFeatherSlider = document.getElementById('foxFeatherSlider');
-  var foxFeatherLabel = document.getElementById('foxFeatherLabel');
-  if(foxFeatherSlider){
-    var fv = parseFloat(foxFeatherSlider.value);
-    sandbox.setUniform('u_foxFeather', fv);
-    if(foxFeatherLabel) foxFeatherLabel.textContent = fv + 'px';
-    foxFeatherSlider.addEventListener('input', function(){
-      var fv = parseFloat(this.value);
-      sandbox.setUniform('u_foxFeather', fv);
-      if(foxFeatherLabel) foxFeatherLabel.textContent = fv + 'px';
-    });
-  }
+  // Fox feather fixed to 20px (slider removed)
+  sandbox.setUniform('u_foxFeather', 20.0);
 
   // 偵測 u_fox texture 是否有正確載入，並在載入完成時回報到 console（不要自動關閉偵錯）
   setTimeout(function(){
@@ -352,6 +358,20 @@
     var mx = cssX * (canvas.width / rect.width);
     var my = canvas.height - cssY * (canvas.height / rect.height);
     sandbox.setUniform('u_mouse', mx, my);
+    // compute horizontal velocity (px/s) and update flip target accordingly
+    var now = (window.performance && performance.now) ? performance.now() : Date.now();
+    if(_prevMouseX === null || _prevTime === null){
+      _prevMouseX = mx;
+      _prevTime = now;
+    }
+    var dt = Math.max(1.0, now - _prevTime); // ms
+    var vx = (mx - _prevMouseX) / (dt / 1000.0); // px/s
+    // update target: moving right -> 1.0, moving left -> 0.0
+    if(vx > _flipThreshold) _foxFlipTarget = 1.0;
+    else if(vx < -_flipThreshold) _foxFlipTarget = 0.0;
+    // remember previous for next velocity calc
+    _prevMouseX = mx;
+    _prevTime = now;
     // debug log for verification
     if(window.__mouseDebugCounter === undefined) window.__mouseDebugCounter = 0;
     if((window.__mouseDebugCounter++ % 50) === 0){
@@ -367,6 +387,14 @@
       var mx = canvas.width / 2.0;
       var my = canvas.height / 2.0;
       sandbox.setUniform('u_mouse', mx, my);
+      // set initial flip based on center (defaults to not flipped)
+      var initialFlip = (mx > (canvas.width * 0.5)) ? 1.0 : 0.0;
+      _foxFlipValue = initialFlip;
+      _foxFlipTarget = initialFlip;
+      sandbox.setUniform('u_foxFlip', initialFlip);
+      // initialize prev mouse/time for velocity calc
+      _prevMouseX = mx;
+      _prevTime = (window.performance && performance.now) ? performance.now() : Date.now();
       // DOM fox removed; no DOM positioning necessary
       console.log('initial u_mouse (px)=', mx, my, 'canvas draw size=', canvas.width, 'x', canvas.height);
     }, 100);

@@ -41,6 +41,7 @@ uniform float u_foxSize;  // 狐狸顯示寬度相對於畫布寬度 (可大於1
 uniform float u_foxLayer; // 狐狸所在圖層索引：0 = 最前景, 5 = 最背後
 uniform float u_foxOverlay; // if >0.5 draw fox as overlay after all layers
 uniform float u_foxFeather; // feather radius in pixels for soft edges
+uniform float u_foxFlip; // 0.0 = normal, 1.0 = horizontally flipped
 
 // Luminance helper (保留以備未來需要，但目前透明判斷僅使用 alpha)
 float lum(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
@@ -84,10 +85,18 @@ float foxMaskAdjusted(vec4 foxS){
 	return fa;
 }
 
+// Helper to sample the fox texture with optional horizontal flip
+vec4 sampleFox(vec2 local){
+	// flip horizontally if u_foxFlip > 0.5
+	float x = mix(local.x, 1.0 - local.x, clamp(u_foxFlip, 0.0, 1.0));
+	vec2 s = vec2(x, local.y);
+	return texture2D(u_fox, s);
+}
+
 // Feathered mask sampling: blur alpha around local uv using 3x3 kernel scaled by u_foxFeather
 float foxMaskFeathered(vec2 local){
 	// compute base mask from foxMaskAdjusted at center
-	float base = foxMaskAdjusted(texture2D(u_fox, local));
+	float base = foxMaskAdjusted(sampleFox(local));
 	if(u_foxFeather <= 0.5) return base;
 	// convert feather px to UV space (use max dimension for roughly isotropic radius)
 	float maxDim = max(u_foxResolution.x, u_foxResolution.y);
@@ -105,7 +114,7 @@ float foxMaskFeathered(vec2 local){
 	offs[8] = vec2( 1.0,  1.0) * radiusUV;
 	float sum = 0.0;
 	for(int i=0;i<9;i++){
-		vec4 s = texture2D(u_fox, local + offs[i]);
+		vec4 s = sampleFox(local + offs[i]);
 		// use foxMaskAdjusted on each sample so premultiplied/brightness fallback is respected
 		sum += foxMaskAdjusted(s);
 	}
@@ -270,7 +279,7 @@ void main(){
 	if(u_foxLayer == 4.0){
 		vec2 local = foxLocalFromFragCoord(gl_FragCoord.xy);
 		if(local.x >= 0.0 && local.x <= 1.0 && local.y >= 0.0 && local.y <= 1.0){
-			vec4 foxS = texture2D(u_fox, local);
+			vec4 foxS = sampleFox(local);
 			float fa = foxMaskFeathered(local);
 			vec3 unprem = (foxS.a > 0.0001) ? (foxS.rgb / foxS.a) : foxS.rgb;
 			vec3 srcPremult = unprem * fa;
@@ -285,7 +294,7 @@ void main(){
 	if(u_foxLayer == 3.0){
 			vec2 local = foxLocalFromFragCoord(gl_FragCoord.xy);
 		if(local.x >= 0.0 && local.x <= 1.0 && local.y >= 0.0 && local.y <= 1.0){
-				vec4 foxS = texture2D(u_fox, local);
+					vec4 foxS = sampleFox(local);
 				float fa = foxMaskFeathered(local);
 				vec3 unprem = (foxS.a > 0.0001) ? (foxS.rgb / foxS.a) : foxS.rgb;
 				vec3 srcPremult = unprem * fa;
@@ -300,7 +309,7 @@ void main(){
 	if(u_foxLayer == 2.0){
 			vec2 local = foxLocalFromFragCoord(gl_FragCoord.xy);
 		if(local.x >= 0.0 && local.x <= 1.0 && local.y >= 0.0 && local.y <= 1.0){
-				vec4 foxS = texture2D(u_fox, local);
+					vec4 foxS = sampleFox(local);
 				float fa = foxMaskFeathered(local);
 				vec3 unprem = (foxS.a > 0.0001) ? (foxS.rgb / foxS.a) : foxS.rgb;
 				vec3 srcPremult = unprem * fa;
@@ -315,7 +324,7 @@ void main(){
 	if(u_foxLayer == 1.0){
 			vec2 local = foxLocalFromFragCoord(gl_FragCoord.xy);
 		if(local.x >= 0.0 && local.x <= 1.0 && local.y >= 0.0 && local.y <= 1.0){
-				vec4 foxS = texture2D(u_fox, local);
+					vec4 foxS = sampleFox(local);
 				float fa = foxMaskFeathered(local);
 				vec3 unprem = (foxS.a > 0.0001) ? (foxS.rgb / foxS.a) : foxS.rgb;
 				vec3 srcPremult = unprem * fa;
@@ -330,7 +339,7 @@ void main(){
 	if(u_foxLayer == 0.0){
 			vec2 local = foxLocalFromFragCoord(gl_FragCoord.xy);
 		if(local.x >= 0.0 && local.x <= 1.0 && local.y >= 0.0 && local.y <= 1.0){
-				vec4 foxS = texture2D(u_fox, local);
+					vec4 foxS = sampleFox(local);
 				float fa = foxMaskFeathered(local);
 				vec3 unprem = (foxS.a > 0.0001) ? (foxS.rgb / foxS.a) : foxS.rgb;
 				vec3 srcPremult = unprem * fa;
@@ -351,7 +360,7 @@ void main(){
 	if(u_foxOverlay > 0.5){
 		vec2 local = foxLocalFromFragCoord(gl_FragCoord.xy);
 		if(local.x >= 0.0 && local.x <= 1.0 && local.y >= 0.0 && local.y <= 1.0){
-			vec4 foxS = texture2D(u_fox, local);
+			vec4 foxS = sampleFox(local);
 			float fa = foxMaskFeathered(local);
 			vec3 srcPremult = (foxS.r <= foxS.a + 0.0001 && foxS.g <= foxS.a + 0.0001 && foxS.b <= foxS.a + 0.0001) ? foxS.rgb : foxS.rgb * fa;
 			outCol = srcPremult + outCol * (1.0 - fa);
