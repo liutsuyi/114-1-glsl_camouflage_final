@@ -7,16 +7,105 @@
   <script type="text/javascript"
     src="dist/GlslCanvas.js"></script>
   <style>
+    /* 聶永貞風格：簡潔、留白、質感紙色與沉穩深色對比 */
     body {
-      background: #101515;
+      margin: 0;
+      height: 100vh;
+      background: linear-gradient(180deg,#0b0f0e 0%, #0f1410 100%);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      color: #111;
+      /* 優先使用明體系字型；若系統沒有則退至 Noto Serif TC / serif */
+      font-family: "PMingLiU", "MingLiU", "Noto Serif TC", serif;
+      font-size: 15px;
+      line-height: 1.4;
     }
 
+    /* 畫布靠右以騰出左側控制區 */
     #glslCanvas {
       position: absolute;
       top: 50%;
-      left: 50%;
+      left: 60%;
       transform: translate(-50%, -50%);
+      border-radius: 10px;
+      box-shadow: 0 18px 40px rgba(0,0,0,0.6);
+      background: #000;
     }
+
+    /* 左側控制面板：紙色、陰影、留白 */
+    #ui {
+      position: fixed;
+      /* left/top will be positioned by JS to stick to canvas left edge */
+      left: auto;
+      top: auto;
+      transform: none;
+      z-index: 11;
+      background: rgba(250,246,241,0.98);
+      color: #2b231f;
+      padding: 16px 18px;
+      border-radius: 10px;
+      box-shadow: 0 8px 28px rgba(6,10,8,0.6);
+      max-width: 240px;
+      border: 1px solid rgba(30,30,30,0.04);
+    }
+
+    #ui label { display: block; margin-bottom: 10px; font-weight: 500; }
+    #ui .small { font-size: 12px; color: #7a6f67; margin-top: 4px; }
+
+    /* select 樣式 */
+    #textureSetSelect {
+      width: 100%;
+      padding: 8px 10px;
+      font-family: inherit;
+      background: #fff;
+      color: #2b231f; /* 深色文字，增加可讀性 */
+      border: 1px solid rgba(40,40,40,0.06);
+      border-radius: 6px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+    }
+
+    /* range (slider) 基本樣式 */
+    input[type=range] {
+      width: 100%;
+      margin-top: 6px;
+      background: transparent;
+    }
+    input[type=range]::-webkit-slider-runnable-track {
+      height: 8px;
+      background: linear-gradient(90deg,#e9dacf,#d8c9bd);
+      border-radius: 6px;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 18px;
+      height: 18px;
+      margin-top: -5px;
+      background: #2b231f;
+      border-radius: 50%;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.35);
+      border: 2px solid #fff3ec;
+    }
+    input[type=range]::-moz-range-track {
+      height: 8px;
+      background: linear-gradient(90deg,#e9dacf,#d8c9bd);
+      border-radius: 6px;
+    }
+    input[type=range]::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      background: #2b231f;
+      border-radius: 50%;
+      border: 2px solid #fff3ec;
+    }
+
+    /* 小字說明 */
+    #textureSetNote { font-size: 12px; color: #6d625b; margin-top:6px; }
+
+    /* 調整 label 與控制元件間距 */
+    #ui > div { margin-bottom: 12px; }
   </style>
 </head>
 
@@ -25,9 +114,18 @@
     data-textures="data/0_Top%20Canopy%20Leaves_alpha.png,data/1_Foreground_alpha.png,data/2_Mid-Foreground_alpha.png,data/3_Midground_alpha.png,data/4_Back-Midground_alpha.png,data/5_Background.png"></canvas>
 
   <!-- UI: focus & max blur sliders -->
-  <div id="ui" style="position:fixed;right:18px;top:18px;color:#fff;font-family:sans-serif;z-index:10">
+  <div id="ui">
     <div style="margin-bottom:8px">
       <label>Focus: <input id="focusSlider" type="range" min="0" max="1" step="0.01" value="0.0"></label>
+    </div>
+    <div style="margin-bottom:8px">
+      <label>Texture Set: 
+        <select id="textureSetSelect">
+          <option value="0">Set 1</option>
+          <option value="1">Set 2</option>
+        </select>
+      </label>
+      <div style="font-size:12px;color:#ccc" id="textureSetNote">Using Set 1</div>
     </div>
     <div>
       <label>Max Blur: <input id="maxBlurSlider" type="range" min="0" max="1" step="0.01" value="0.5"></label>
@@ -50,6 +148,31 @@
   var focusSlider = document.getElementById('focusSlider');
   var maxBlurSlider = document.getElementById('maxBlurSlider');
 
+  // Texture set selector
+  var textureSetSelect = document.getElementById('textureSetSelect');
+  var textureSetNote = document.getElementById('textureSetNote');
+  // Read initial textures from canvas `data-textures`
+  var initialTextures = (canvas.getAttribute('data-textures') || '').split(',').filter(function(t){ return t !== ''; });
+  // Prepare two sets: default second set is a copy of the first (replace when you upload new images)
+  var textureSets = [];
+  textureSets[0] = initialTextures.slice();
+  textureSets[1] = initialTextures.slice();
+
+  function applyTextureSet(idx){
+    idx = parseInt(idx) || 0;
+    var list = textureSets[idx] || textureSets[0];
+    for(var i=0;i<list.length;i++){
+      sandbox.setUniform('u_tex'+i, list[i]);
+    }
+    // keep data-textures attribute in sync
+    canvas.setAttribute('data-textures', list.join(','));
+    textureSetNote.textContent = 'Using Set ' + (idx+1);
+    // ensure other uniforms stay applied
+    updateUniforms();
+  }
+
+  textureSetSelect.addEventListener('change', function(){ applyTextureSet(this.value); });
+
   function updateUniforms(){
     // focus: 0 = front in focus, 1 = back in focus
     sandbox.setUniform('u_focus', parseFloat(focusSlider.value));
@@ -62,7 +185,38 @@
   focusSlider.addEventListener('input', updateUniforms);
   maxBlurSlider.addEventListener('input', updateUniforms);
   // set initial values
-  updateUniforms();
+  // apply initial texture set then uniforms
+  applyTextureSet(textureSetSelect.value || 0);
+
+  // Position UI to be vertically centered and fixed to the canvas left edge.
+  function positionUI(){
+    var ui = document.getElementById('ui');
+    if(!canvas || !ui) return;
+    var crect = canvas.getBoundingClientRect();
+    // ensure ui has been laid out to get correct size
+    var uiW = ui.offsetWidth || 240;
+    var uiH = ui.offsetHeight || 180;
+    // place ui so its right edge is a small gap from canvas left edge
+    var gap = 12;
+    var left = Math.round(crect.left - uiW - gap);
+    // if not enough space on left, clamp to 10px
+    if(left < 10) left = 10;
+    var top = Math.round(crect.top + crect.height/2 - uiH/2);
+    if(top < 10) top = 10;
+    ui.style.left = left + 'px';
+    ui.style.top = top + 'px';
+    ui.style.transform = 'none';
+  }
+
+  // reposition on load and when window resizes (or when canvas layout changes)
+  window.addEventListener('load', positionUI);
+  window.addEventListener('resize', function(){
+    // debounce a bit
+    clearTimeout(window._positionUITimeout);
+    window._positionUITimeout = setTimeout(positionUI, 80);
+  });
+  // also reposition shortly after initial apply to account for fonts/images
+  setTimeout(positionUI, 120);
 </script>
 
 </html>
