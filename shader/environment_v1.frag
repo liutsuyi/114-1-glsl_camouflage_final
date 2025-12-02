@@ -34,6 +34,7 @@ uniform float u_maxBlur;  // normalized 0..1, scaled inside shader to pixels
 uniform float u_debug;    // if >0.5, visualize layer alpha masks for debugging
 // 新增狐狸貼圖與滑鼠 / 大小 / 層級 uniforms
 uniform sampler2D u_fox;  // 狐狸貼圖（帶 alpha）
+uniform sampler2D u_foxCloth; // 狐狸服裝貼圖（帶 alpha）
 uniform vec2 u_foxResolution; // width,height of the fox texture in pixels
 uniform vec2 u_mouse;     // GlslCanvas 會自動填入滑鼠座標（像素空間）
 uniform float u_foxSize;  // 狐狸顯示寬度相對於畫布寬度 (可大於1.0)
@@ -41,6 +42,7 @@ uniform float u_foxLayer; // 狐狸所在圖層索引：0 = 最前景, 5 = 最�
 uniform float u_foxOverlay; // if >0.5 draw fox as overlay after all layers
 uniform float u_foxFeather; // feather radius in pixels for soft edges
 uniform float u_foxFlip; // 0.0 = normal, 1.0 = horizontally flipped
+uniform float u_foxClothEnabled; // 0.0 = disabled, 1.0 = enabled
 
 // 亮度計算輔助（目前透明判斷主要使用 alpha，此函式保留以備擴充）
 float lum(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
@@ -98,6 +100,23 @@ vec4 sampleFox(vec2 local){
 	return texture2D(u_fox, s);
 }
 
+// return the UV after flip/clamp so other textures (e.g., clothing) can use same coords
+vec2 getFoxUV(vec2 local){
+	float t = clamp(u_foxFlip, 0.0, 1.0);
+	float sE = t * t * (3.0 - 2.0 * t);
+	float eff = sE * (0.75 + 0.25 * sE);
+	float x = mix(local.x, 1.0 - local.x, eff);
+	vec2 uv = vec2(clamp(x, 0.001, 0.999), local.y);
+	return uv;
+}
+
+// sample clothing at same transformed UV
+vec4 sampleFoxCloth(vec2 local){
+	if(u_foxClothEnabled <= 0.5) return vec4(0.0);
+	vec2 uv = getFoxUV(local);
+	return texture2D(u_foxCloth, uv);
+}
+
 // 羽化遮罩：以 3x3 內核在貼圖 local 座標上模糊 alpha（u_foxFeather 為像素半徑）
 float foxMaskFeathered(vec2 local){
 	// compute base mask from foxMaskAdjusted at center
@@ -144,8 +163,21 @@ vec2 foxPixelDims(){
 vec4 blurFox(vec2 local, vec2 pixelDims, float radiusPx){
 	// 將模糊半徑縮小 15%（使用者要求：模糊強度降低 15%）
 	radiusPx *= 0.85;
-	// if radius small, return single sample
-	if(radiusPx <= 0.5) return sampleFox(local);
+	// if radius small, still return a single-sample result,
+	// but ensure clothing (if enabled) is composited per-pixel.
+	if(radiusPx <= 0.5){
+		vec4 s = sampleFox(local);
+		if(u_foxClothEnabled > 0.5){
+			vec4 cloth = sampleFoxCloth(local);
+			// combined premultiplied color = cloth.rgb*cloth.a + fox.rgb*fox.a * (1 - cloth.a)
+			vec3 combinedPrem = cloth.rgb * cloth.a + (s.rgb * s.a) * (1.0 - cloth.a);
+			float combinedA = cloth.a + s.a * (1.0 - cloth.a);
+			return vec4(combinedPrem, combinedA);
+		} else {
+			// return premultiplied form for consistency with the multi-sample path
+			return vec4(s.rgb * s.a, s.a);
+		}
+	}
 	// 以中心 + 12 個圓周方向共 13 點取樣（品質較好但成本中等）
 	const int N = 13;
 	vec2 dirs[13];
@@ -170,8 +202,18 @@ vec4 blurFox(vec2 local, vec2 pixelDims, float radiusPx){
 		vec2 pxOff = dirs[i] * radiusPx;
 		vec2 uvOff = vec2(pxOff.x / pixelDims.x, pxOff.y / pixelDims.y);
 		vec4 s = sampleFox(local + uvOff);
-		accumCol += s.rgb * s.a;
-		accumA += s.a;
+		// 如果有服裝貼圖則先把服裝合成在狐狸上再累加 (premultiplied compositing)
+		if(u_foxClothEnabled > 0.5){
+			vec4 cloth = sampleFoxCloth(local + uvOff);
+			// combined premultiplied color = cloth.rgb*cloth.a + fox.rgb*fox.a * (1 - cloth.a)
+			vec3 combinedPrem = cloth.rgb * cloth.a + (s.rgb * s.a) * (1.0 - cloth.a);
+			float combinedA = cloth.a + s.a * (1.0 - cloth.a);
+			accumCol += combinedPrem;
+			accumA += combinedA;
+		} else {
+			accumCol += s.rgb * s.a;
+			accumA += s.a;
+		}
 	}
 	float invN = 1.0 / float(N);
 	float avgA = accumA * invN;
@@ -426,11 +468,26 @@ void main(){
 	if(u_foxOverlay > 0.5){
 		vec2 local = foxLocalFromFragCoord(gl_FragCoord.xy);
 		if(local.x >= 0.0 && local.x <= 1.0 && local.y >= 0.0 && local.y <= 1.0){
+			// sample fox and clothing (no blur for overlay)
 			vec4 foxS = sampleFox(local);
-			float fa = foxMaskFeathered(local);
-			vec3 srcPremult = (foxS.r <= foxS.a + 0.0001 && foxS.g <= foxS.a + 0.0001 && foxS.b <= foxS.a + 0.0001) ? foxS.rgb : foxS.rgb * fa;
-			outCol = srcPremult + outCol * (1.0 - fa);
-			outA = fa + outA * (1.0 - fa);
+			vec4 cloth = sampleFoxCloth(local);
+			if(u_foxClothEnabled > 0.5){
+				// premultiplied composition of cloth over fox (per-pixel)
+				vec3 combinedPrem = cloth.rgb * cloth.a + (foxS.rgb * foxS.a) * (1.0 - cloth.a);
+				float combinedA = cloth.a + foxS.a * (1.0 - cloth.a);
+				// unpremultiply to get color for mask multiplication later
+				vec3 unprem = (combinedA > 0.0001) ? (combinedPrem / combinedA) : combinedPrem;
+				float fa = foxMaskFeathered(local);
+				vec3 srcPremult = unprem * fa;
+				outCol = srcPremult + outCol * (1.0 - fa);
+				outA = fa + outA * (1.0 - fa);
+			} else {
+				float fa = foxMaskFeathered(local);
+				vec3 unprem = (foxS.a > 0.0001) ? (foxS.rgb / foxS.a) : foxS.rgb;
+				vec3 srcPremult = unprem * fa;
+				outCol = srcPremult + outCol * (1.0 - fa);
+				outA = fa + outA * (1.0 - fa);
+			}
 		}
 	}
 

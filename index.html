@@ -150,6 +150,16 @@
         <div class="small" style="margin-left:6px">目前圖層: <span id="foxLayerLabel">0</span></div>
       </div>
     </div>
+    <div style="margin-top:8px">
+      <label style="display:flex;align-items:center;gap:8px"><input id="foxClothToggle" type="checkbox"> <span style="font-weight:500">穿上偽裝服</span></label>
+      <div class="small">若勾選，將以預設或上傳的偽裝服套用於狐狸（會跟隨翻轉/模糊/羽化）。</div>
+      <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
+        <input id="foxClothUpload" type="file" accept="image/*" style="flex:1">
+      </div>
+      <div style="margin-top:6px;">
+        <button id="foxClothLoadDefault">載入預設偽裝</button>
+      </div>
+    </div>
   </div>
 </body>
 <script>
@@ -305,6 +315,115 @@
   sandbox.setUniform('u_foxOverlay', foxOverlayToggle && foxOverlayToggle.checked ? 1.0 : 0.0);
   if(foxOverlayToggle){
     foxOverlayToggle.addEventListener('change', function(){ sandbox.setUniform('u_foxOverlay', this.checked ? 1.0 : 0.0); });
+  }
+
+  // 偽裝服 (cloth) support: 初始為關閉
+  sandbox.setUniform('u_foxClothEnabled', 0.0);
+  var foxClothLoaded = false;
+  var foxClothSource = null; // store dataURL or source string
+
+  function loadClothFromImageElement(img){
+    var c = document.createElement('canvas');
+    c.width = img.naturalWidth || img.width;
+    c.height = img.naturalHeight || img.height;
+    var ctx = c.getContext('2d');
+    ctx.clearRect(0,0,c.width,c.height);
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    try{
+      try{
+        var imgData = ctx.getImageData(0,0,c.width,c.height);
+        var d = imgData.data;
+        for(var i=0;i<d.length;i+=4){
+          var a = d[i+3] / 255;
+          d[i] = Math.round(d[i] * a);
+          d[i+1] = Math.round(d[i+1] * a);
+          d[i+2] = Math.round(d[i+2] * a);
+        }
+        ctx.putImageData(imgData, 0, 0);
+      }catch(e){
+        console.warn('Unable to premultiply cloth image pixels (CORS or security):', e);
+      }
+      var dataUrl = c.toDataURL('image/png');
+      sandbox.setUniform('u_foxCloth', dataUrl);
+      sandbox.setUniform('u_foxClothEnabled', 1.0);
+      foxClothLoaded = true;
+      foxClothSource = dataUrl;
+      console.log('u_foxCloth uploaded from canvas (dataURL):', c.width, 'x', c.height);
+    }catch(e){
+      console.warn('toDataURL failed for cloth, falling back to image element:', e);
+      // fallback: set the image element or path directly
+      try{
+        sandbox.setUniform('u_foxCloth', img);
+        sandbox.setUniform('u_foxClothEnabled', 1.0);
+        foxClothLoaded = true;
+        foxClothSource = img.src;
+      }catch(e2){
+        console.error('Failed to set cloth texture:', e2);
+      }
+    }
+  }
+
+  // UI elements for cloth
+  var foxClothToggle = document.getElementById('foxClothToggle');
+  var foxClothUpload = document.getElementById('foxClothUpload');
+  var foxClothLoadDefault = document.getElementById('foxClothLoadDefault');
+
+  if(foxClothToggle){
+    foxClothToggle.addEventListener('change', function(){
+      if(this.checked){
+        // enable: if not loaded yet, load default cloth first
+        if(!foxClothLoaded){
+          // load default cloth then enable when ready
+          var img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.src = 'data/fox_cloth.png';
+          img.onload = function(){ loadClothFromImageElement(img); };
+          img.onerror = function(e){
+            console.warn('Failed to load default cloth image:', e);
+            // still set enabled flag to attempt rendering (may be no texture)
+            sandbox.setUniform('u_foxClothEnabled', 1.0);
+          };
+        }else{
+          sandbox.setUniform('u_foxClothEnabled', 1.0);
+        }
+      }else{
+        sandbox.setUniform('u_foxClothEnabled', 0.0);
+      }
+    });
+  }
+
+  if(foxClothUpload){
+    foxClothUpload.addEventListener('change', function(e){
+      var f = this.files && this.files[0];
+      if(!f) return;
+      var reader = new FileReader();
+      reader.onload = function(ev){
+        var dataUrl = ev.target.result;
+        var img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = function(){
+          loadClothFromImageElement(img);
+          // if toggle is checked, ensure enabled
+          if(foxClothToggle && foxClothToggle.checked){ sandbox.setUniform('u_foxClothEnabled', 1.0); }
+        };
+        img.onerror = function(err){ console.warn('Failed to create image from uploaded file:', err); };
+        img.src = dataUrl;
+      };
+      reader.readAsDataURL(f);
+    });
+  }
+
+  if(foxClothLoadDefault){
+    foxClothLoadDefault.addEventListener('click', function(){
+      var img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = 'data/fox_cloth.png';
+      img.onload = function(){
+        loadClothFromImageElement(img);
+        if(foxClothToggle) foxClothToggle.checked = true;
+      };
+      img.onerror = function(e){ console.warn('Failed to load default cloth image:', e); };
+    });
   }
 
   // Layer controls UI
