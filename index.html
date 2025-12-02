@@ -298,6 +298,8 @@
   // 初始狐狸所在圖層（0 = 最前；5 = 最後）
   var foxLayer = 0;
   sandbox.setUniform('u_foxLayer', foxLayer);
+  // base size (from slider) before per-layer scaling
+  var baseFoxSize = 0.2;
   // fox overlay toggle: 1 = overlay on (draw fox after all layers), 0 = respect u_foxLayer
   var foxOverlayToggle = document.getElementById('foxOverlayToggle');
   sandbox.setUniform('u_foxOverlay', foxOverlayToggle && foxOverlayToggle.checked ? 1.0 : 0.0);
@@ -327,6 +329,9 @@
     foxLayer = v;
     sandbox.setUniform('u_foxLayer', foxLayer);
     if(foxLayerLabel) foxLayerLabel.textContent = String(foxLayer);
+    // apply per-layer scale: shrink by 15% each layer moved back (multiplicative)
+    var scaled = baseFoxSize * Math.pow(0.85, foxLayer);
+    sandbox.setUniform('u_foxSize', scaled);
   }
 
   function moveFoxBack(){
@@ -384,7 +389,11 @@
   if(foxSizeSlider){
     // set initial value and uniform
     var initialFoxSize = parseFloat(foxSizeSlider.value);
-    sandbox.setUniform('u_foxSize', initialFoxSize);
+    // base size (before per-layer scaling)
+    baseFoxSize = initialFoxSize;
+    // apply per-layer scaling for current layer
+    var initialScaled = baseFoxSize * Math.pow(0.70, foxLayer);
+    sandbox.setUniform('u_foxSize', initialScaled);
     // map slider range [min..max] -> display 1..100%
     var fsMin = parseFloat(foxSizeSlider.min);
     var fsMax = parseFloat(foxSizeSlider.max);
@@ -392,7 +401,10 @@
     if(foxSizeLabel) foxSizeLabel.textContent = displayPct + '%';
     foxSizeSlider.addEventListener('input', function(){
       var v = parseFloat(this.value);
-      sandbox.setUniform('u_foxSize', v);
+      // update base size and recompute scaled size according to current layer
+      baseFoxSize = v;
+      var scaled = baseFoxSize * Math.pow(0.70, foxLayer);
+      sandbox.setUniform('u_foxSize', scaled);
       var fsMin = parseFloat(this.min);
       var fsMax = parseFloat(this.max);
       var displayPct = Math.round(((v - fsMin) / (fsMax - fsMin)) * 99.0 + 1.0);
