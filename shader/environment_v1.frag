@@ -1,17 +1,16 @@
-// Author: tsuyi
-// Title: environment_v1.frag
-// Purpose: Composite up to 5 textures (front -> back) into a paper-cutting style scene.
+// 作者: tsuyi
+// 檔名: environment_v1.frag
+// 說明: 將最多 6 張圖層（前景 -> 背景）以紙雕風格合成。
 //
 // 中文說明：
 // 本 shader 將多張圖層由前景 (u_tex0) 到背景 (u_tex5) 以紙雕（paper-cut）風格合成。
 // 透明判斷：
-//  - 僅以 PNG 圖片的 alpha 通道決定透明（也就是只有貼圖本身有透明像素時才會呈現透明），
-//    不再以亮度或灰階來當作遮罩，以避免淺色區域被誤判為透明。
+//  - 以貼圖的 alpha 通道作為主要透明判斷來源，避免以亮度誤判淺色為透明。
 //  - 若貼圖沒有 alpha（alpha == 1.0），則視為完全不透明。
-// 控制：
-//  - `u_focus` 控制景深焦點（0 = 前景清晰，1 = 背景清晰）。
-//  - `u_maxBlur` 控制最大模糊半徑（0..1，會映射到像素值）。
-//  - `u_debug` 若 > 0.5，會顯示各層 alpha 的偵錯視覺化（R=層0, G=層1, B=層2）。
+// 控制參數：
+//  - `u_focus`: 景深焦點（0 = 前景清晰，1 = 背景清晰）
+//  - `u_maxBlur`: 最大模糊強度（0..1，shader 會轉換為像素半徑）
+//  - `u_debug`: 若 > 0.5 顯示偵錯視覺化
 // 使用方式：在 `index.html` 的 `data-textures` 指定紋理路徑，順序為前到後 (u_tex0 ... u_tex5)。
 
 #ifdef GL_ES
@@ -21,7 +20,7 @@ precision mediump float;
 uniform vec2 u_resolution;
 uniform float u_time;
 
-// Textures: u_tex0 is front-most, u_tex4 is background (last)
+// 貼圖說明：u_tex0 為最前方圖層，u_tex5 為最背後圖層
 uniform sampler2D u_tex0;
 uniform sampler2D u_tex1;
 uniform sampler2D u_tex2;
@@ -29,7 +28,7 @@ uniform sampler2D u_tex3;
 uniform sampler2D u_tex4;
 uniform sampler2D u_tex5;
 
-// Focus and blur control (0..1)
+// 景深與模糊控制（範圍 0..1）
 uniform float u_focus;    // 0 = front in focus, 1 = back in focus
 uniform float u_maxBlur;  // normalized 0..1, scaled inside shader to pixels
 uniform float u_debug;    // if >0.5, visualize layer alpha masks for debugging
@@ -43,19 +42,18 @@ uniform float u_foxOverlay; // if >0.5 draw fox as overlay after all layers
 uniform float u_foxFeather; // feather radius in pixels for soft edges
 uniform float u_foxFlip; // 0.0 = normal, 1.0 = horizontally flipped
 
-// Luminance helper (保留以備未來需要，但目前透明判斷僅使用 alpha)
+// 亮度計算輔助（目前透明判斷主要使用 alpha，此函式保留以備擴充）
 float lum(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
 
-// layerMask: 只以圖檔的 alpha 通道作為遮罩回傳（0 = 透明, 1 = 不透明）。
-// 這裡不再以亮度作為備援遮罩，以避免淺色被誤判為透明。
-// threshold/softness 參數保留但目前不會影響 alpha 判斷（以方便未來擴充）。
+// layerMask: 使用貼圖的 alpha 值作為遮罩（0 = 透明, 1 = 不透明）。
+// 保留 threshold/softness 參數以供未來擴充，但目前未影響判斷結果。
 float layerMask(vec4 samp, float threshold, float softness){
 	// 直接使用 alpha 值（PNG 的透明區域會有 alpha < 1.0）
 	return samp.a;
 }
 
-// foxMask: 優先使用圖片 alpha，若 alpha 非常小（接近 0），
-// 則退回使用亮度 (luminance) 作為遮罩切換，避免某些圖片只有 RGB 但 alpha 為 0 的情況
+// foxMask: 優先使用圖片的 alpha。若 alpha 非常小，會以亮度作為備援遮罩，
+// 以避免某些貼圖在 alpha 為 0 時仍有可見 RGB 的狀況被忽略。
 float foxMask(vec4 foxS){
 	float a = foxS.a;
 	// 若 alpha 足夠大，基礎遮罩為 alpha
@@ -85,28 +83,27 @@ float foxMaskAdjusted(vec4 foxS){
 	return fa;
 }
 
-// Helper to sample the fox texture with optional horizontal flip
+// 取樣輔助：從狐狸貼圖取樣並可選擇水平翻轉
 vec4 sampleFox(vec2 local){
-	// Use an eased, attenuated interpolation to reduce mid-transition stretching.
+	// 使用緩和的插值（ease in/out）並在中段衰減強度，減少翻轉時的拉伸感
 	float t = clamp(u_foxFlip, 0.0, 1.0);
-	// cubic smoothstep (ease in/out)
+	// 三次平滑階梯（cubical smoothstep）
 	float sE = t * t * (3.0 - 2.0 * t);
-	// attenuate mid-range so the coordinate interpolation is less aggressive
-	// during the middle of the transition, but still reaches full flip at t==1.
+	// 在中段進一步衰減插值幅度，使過渡期間不會過度扭曲
 	float eff = sE * (0.75 + 0.25 * sE);
 	float x = mix(local.x, 1.0 - local.x, eff);
 	vec2 s = vec2(x, local.y);
-	// avoid sampling exactly at 0.0/1.0 which can expose hard seams; clamp slightly inside
+	// 避免在 x=0 或 x=1 精準取樣，這會造成明顯切線；稍微 clamp 到內部避免 seam
 	s.x = clamp(s.x, 0.001, 0.999);
 	return texture2D(u_fox, s);
 }
 
-// Feathered mask sampling: blur alpha around local uv using 3x3 kernel scaled by u_foxFeather
+// 羽化遮罩：以 3x3 內核在貼圖 local 座標上模糊 alpha（u_foxFeather 為像素半徑）
 float foxMaskFeathered(vec2 local){
 	// compute base mask from foxMaskAdjusted at center
 	float base = foxMaskAdjusted(sampleFox(local));
 	if(u_foxFeather <= 0.5) return base;
-	// convert feather px to UV space (use max dimension for roughly isotropic radius)
+	// 將羽化的像素半徑轉換為 UV 空間的偏移（以貼圖最大邊長作為參考以近似各向同性）
 	float maxDim = max(u_foxResolution.x, u_foxResolution.y);
 	float radiusUV = u_foxFeather / maxDim;
 	// 3x3 sample offsets
@@ -131,7 +128,7 @@ float foxMaskFeathered(vec2 local){
 	return aBlur;
 }
 
-// compute displayed fox pixel dimensions (width_eff, height) in screen pixels
+// 計算狐狸在畫面上顯示的像素寬高（含水平 padding），回傳 vec2(width_eff, height)
 vec2 foxPixelDims(){
 	float foxPixelW = max(u_foxSize * u_resolution.x, 1.0);
 	float aspect = (u_foxResolution.x > 0.0 && u_foxResolution.y > 0.0) ? (u_foxResolution.x / u_foxResolution.y) : 1.0;
@@ -141,14 +138,15 @@ vec2 foxPixelDims(){
 	return vec2(foxPixelW_eff, foxPixelH);
 }
 
-// Blur the fox texture in screen-space units (radius in pixels).
-// Samples the sprite using sampleFox and converts pixel offsets to local UV offsets
+// 以畫面像素為單位對狐狸貼圖進行模糊。
+// 傳入 local（0..1）、pixelDims（顯示寬高像素）以及要模糊的半徑（像素），
+// 會把像素偏移換算為 local 的 UV 偏移後進行多點取樣。
 vec4 blurFox(vec2 local, vec2 pixelDims, float radiusPx){
-	// reduce blur strength by 15%
+	// 將模糊半徑縮小 15%（使用者要求：模糊強度降低 15%）
 	radiusPx *= 0.85;
 	// if radius small, return single sample
 	if(radiusPx <= 0.5) return sampleFox(local);
-	// center + 12 around circle = 13 samples (better quality, moderate cost)
+	// 以中心 + 12 個圓周方向共 13 點取樣（品質較好但成本中等）
 	const int N = 13;
 	vec2 dirs[13];
 	dirs[0] = vec2( 0.0,    0.0);
@@ -165,9 +163,9 @@ vec4 blurFox(vec2 local, vec2 pixelDims, float radiusPx){
 	dirs[11]= vec2( 0.500, -0.866);
 	dirs[12]= vec2( 0.866, -0.500);
 
+	// 使用預乘（premultiplied）累加：累加 s.rgb * s.a 與 s.a，最後取平均
 	vec3 accumCol = vec3(0.0);
 	float accumA = 0.0;
-	// accumulate premultiplied rgb (s.rgb * s.a) and alpha, then average
 	for(int i=0;i<N;i++){
 		vec2 pxOff = dirs[i] * radiusPx;
 		vec2 uvOff = vec2(pxOff.x / pixelDims.x, pxOff.y / pixelDims.y);
@@ -177,8 +175,8 @@ vec4 blurFox(vec2 local, vec2 pixelDims, float radiusPx){
 	}
 	float invN = 1.0 / float(N);
 	float avgA = accumA * invN;
-	vec3 premultAvg = accumCol * invN; // premultiplied-average RGB
-	// return premultiplied color and average alpha
+	vec3 premultAvg = accumCol * invN; // 預乘平均的 RGB
+	// 回傳預乘顏色與平均 alpha（後續合成使用 premultiplied-over）
 	return vec4(premultAvg, avgA);
 }
 
@@ -198,8 +196,8 @@ vec2 foxLocalFromFragCoord(vec2 fragCoord){
 	return local;
 }
 
-// Disk-like multi-sample blur (~16 samples) for more uniform, circular bokeh.
-// radius is in pixels. This samples points on a circle and averages them.
+// 圓盤採樣模糊（約 16 次採樣），用於對場景圖層做較圓滑的散景模糊。
+// radius 以像素為單位，函式會取多個圓周樣本並加權平均。
 vec3 blurDisk(sampler2D tex, vec2 uv, float radius){
 	if(radius <= 0.5) return texture2D(tex, uv).rgb;
 	vec2 t = 1.0 / u_resolution;
