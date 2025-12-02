@@ -116,7 +116,7 @@
   <!-- UI: focus & max blur sliders -->
   <div id="ui">
     <div style="margin-bottom:8px">
-      <label>Focus: <input id="focusSlider" type="range" min="0" max="1" step="0.01" value="0.0"></label>
+      <label>焦距: <input id="focusSlider" type="range" min="0" max="1" step="0.01" value="0.0"></label>
     </div>
     <!-- Texture Set selector 暫時註解，不顯示也不執行；如需恢復，移除下方註解即可 -->
     <!--
@@ -131,19 +131,24 @@
     </div>
     -->
     <div>
-      <label>Max Blur: <input id="maxBlurSlider" type="range" min="0" max="1" step="0.01" value="0.5"></label>
+      <label>光圈: <input id="maxBlurSlider" type="range" min="0" max="1" step="0.01" value="0.5"></label>
     </div>
     <div style="margin-top:8px">
-      <label>Fox Size: <input id="foxSizeSlider" type="range" min="0.02" max="1.2" step="0.01" value="0.18"></label>
-      <div class="small">狐狸寬度佔畫布寬度： <span id="foxSizeLabel">18%</span></div>
+      <label>Fox Size: <input id="foxSizeSlider" type="range" min="0.2" max="1.0" step="0.01" value="0.2"></label>
+      <div class="small">狐狸尺寸: <span id="foxSizeLabel">1%</span></div>
     </div>
     <div style="margin-top:8px">
       <!-- Fox Feather slider removed; fixed feather value enforced in JS -->
-      <div class="small">狐狸邊緣羽化已固定為 20px（Slider 已移除）</div>
+  
     </div>
     <div style="margin-top:8px">
       <label style="display:flex;align-items:center;gap:8px"><input id="foxOverlayToggle" type="checkbox" checked> <span style="font-weight:500">Fox Overlay</span></label>
       <div class="small">若勾選，狐狸會以 overlay 方式渲染於最前方，確保可見。</div>
+      <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+        <button id="foxLayerBackBtn" title="向後一層">向後</button>
+        <button id="foxLayerForwardBtn" title="向前一層">向前</button>
+        <div class="small" style="margin-left:6px">目前圖層: <span id="foxLayerLabel">0</span></div>
+      </div>
     </div>
   </div>
 </body>
@@ -288,8 +293,8 @@
     };
   })();
   // u_foxSize 為狐狸佔畫布寬度比例（如 0.12 => 12% 畫布寬度）
-  // 使用者要求縮小為原先的 1/10，因此初始值設為 0.18
-  sandbox.setUniform('u_foxSize', 0.18);
+  // u_foxSize 初始值設為 slider 的最小值 0.2 (20% 寬度)
+  sandbox.setUniform('u_foxSize', 0.2);
   // 初始狐狸所在圖層（0 = 最前；5 = 最後）
   var foxLayer = 0;
   sandbox.setUniform('u_foxLayer', foxLayer);
@@ -299,6 +304,68 @@
   if(foxOverlayToggle){
     foxOverlayToggle.addEventListener('change', function(){ sandbox.setUniform('u_foxOverlay', this.checked ? 1.0 : 0.0); });
   }
+
+  // Layer controls UI
+  var foxLayerBackBtn = document.getElementById('foxLayerBackBtn');
+  var foxLayerForwardBtn = document.getElementById('foxLayerForwardBtn');
+  var foxLayerLabel = document.getElementById('foxLayerLabel');
+  if(foxLayerLabel) foxLayerLabel.textContent = String(foxLayer);
+
+  // Safety: prevent extremely fast repeated layer changes
+  var _layerChangeLocked = false;
+  function _withLayerCooldown(fn){
+    if(_layerChangeLocked) return;
+    _layerChangeLocked = true;
+    try{ fn(); }finally{
+      setTimeout(function(){ _layerChangeLocked = false; }, 140);
+    }
+  }
+
+  function setFoxLayer(newLayer){
+    // clamp to valid range 0..5
+    var v = Math.max(0, Math.min(5, Math.floor(newLayer)));
+    foxLayer = v;
+    sandbox.setUniform('u_foxLayer', foxLayer);
+    if(foxLayerLabel) foxLayerLabel.textContent = String(foxLayer);
+  }
+
+  function moveFoxBack(){
+    _withLayerCooldown(function(){
+      // if overlay was on, disable it so layer changes take effect
+      if(foxOverlayToggle && foxOverlayToggle.checked){
+        foxOverlayToggle.checked = false;
+        sandbox.setUniform('u_foxOverlay', 0.0);
+      }
+      setFoxLayer(foxLayer + 1);
+    });
+  }
+
+  function moveFoxForward(){
+    _withLayerCooldown(function(){
+      if(foxOverlayToggle && foxOverlayToggle.checked){
+        foxOverlayToggle.checked = false;
+        sandbox.setUniform('u_foxOverlay', 0.0);
+      }
+      setFoxLayer(foxLayer - 1);
+    });
+  }
+
+  if(foxLayerBackBtn) foxLayerBackBtn.addEventListener('click', moveFoxBack);
+  if(foxLayerForwardBtn) foxLayerForwardBtn.addEventListener('click', moveFoxForward);
+
+  // Keyboard shortcuts: ArrowLeft => move forward (towards front), ArrowRight => move back
+  window.addEventListener('keydown', function(e){
+    // ignore when typing in inputs/textareas or contenteditable
+    var ae = document.activeElement;
+    if(ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+    if(e.key === 'ArrowLeft'){
+      e.preventDefault();
+      moveFoxForward();
+    } else if(e.key === 'ArrowRight'){
+      e.preventDefault();
+      moveFoxBack();
+    }
+  });
 
   // 點擊 canvas 左鍵讓狐狸往後一層（towards background）移動，超過最後一層則回到最前
   // 目前為了 Debug 穩定性暫時停用點擊切換圖層功能：
@@ -318,11 +385,18 @@
     // set initial value and uniform
     var initialFoxSize = parseFloat(foxSizeSlider.value);
     sandbox.setUniform('u_foxSize', initialFoxSize);
-    if(foxSizeLabel) foxSizeLabel.textContent = Math.round(initialFoxSize * 100) + '%';
+    // map slider range [min..max] -> display 1..100%
+    var fsMin = parseFloat(foxSizeSlider.min);
+    var fsMax = parseFloat(foxSizeSlider.max);
+    var displayPct = Math.round(((initialFoxSize - fsMin) / (fsMax - fsMin)) * 99.0 + 1.0);
+    if(foxSizeLabel) foxSizeLabel.textContent = displayPct + '%';
     foxSizeSlider.addEventListener('input', function(){
       var v = parseFloat(this.value);
       sandbox.setUniform('u_foxSize', v);
-      if(foxSizeLabel) foxSizeLabel.textContent = Math.round(v * 100) + '%';
+      var fsMin = parseFloat(this.min);
+      var fsMax = parseFloat(this.max);
+      var displayPct = Math.round(((v - fsMin) / (fsMax - fsMin)) * 99.0 + 1.0);
+      if(foxSizeLabel) foxSizeLabel.textContent = displayPct + '%';
     });
   }
   // Fox feather slider wiring
