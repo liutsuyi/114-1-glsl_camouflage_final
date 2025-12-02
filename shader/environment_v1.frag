@@ -87,9 +87,17 @@ float foxMaskAdjusted(vec4 foxS){
 
 // Helper to sample the fox texture with optional horizontal flip
 vec4 sampleFox(vec2 local){
-	// flip horizontally if u_foxFlip > 0.5
-	float x = mix(local.x, 1.0 - local.x, clamp(u_foxFlip, 0.0, 1.0));
+	// Use an eased, attenuated interpolation to reduce mid-transition stretching.
+	float t = clamp(u_foxFlip, 0.0, 1.0);
+	// cubic smoothstep (ease in/out)
+	float sE = t * t * (3.0 - 2.0 * t);
+	// attenuate mid-range so the coordinate interpolation is less aggressive
+	// during the middle of the transition, but still reaches full flip at t==1.
+	float eff = sE * (0.75 + 0.25 * sE);
+	float x = mix(local.x, 1.0 - local.x, eff);
 	vec2 s = vec2(x, local.y);
+	// avoid sampling exactly at 0.0/1.0 which can expose hard seams; clamp slightly inside
+	s.x = clamp(s.x, 0.001, 0.999);
 	return texture2D(u_fox, s);
 }
 
@@ -131,7 +139,11 @@ vec2 foxLocalFromFragCoord(vec2 fragCoord){
 	// preserve texture aspect ratio: height = width * (texHeight/texWidth)
 	float aspect = (u_foxResolution.x > 0.0 && u_foxResolution.y > 0.0) ? (u_foxResolution.x / u_foxResolution.y) : 1.0;
 	float foxPixelH = max(foxPixelW / aspect, 1.0);
-	vec2 local = (fragCoord - u_mouse) / vec2(foxPixelW, foxPixelH) + vec2(0.5);
+	// add a small horizontal padding to avoid visible clipping at texture edges
+	// this slightly reduces displayed width so the fox won't be cut at extremes
+	float padFactor = 0.12; // 6% extra horizontal padding
+	float foxPixelW_eff = foxPixelW * (1.0 + padFactor);
+	vec2 local = (fragCoord - u_mouse) / vec2(foxPixelW_eff, foxPixelH) + vec2(0.5);
 	return local;
 }
 

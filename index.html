@@ -156,7 +156,8 @@
   var _foxFlipValue = 0.0;   // current (smoothed) flip value 0..1
   var _foxFlipTarget = 0.0;  // desired flip target (0 or 1)
   var _flipThreshold = 100.0; // px/s threshold to decide direction
-  var _flipSmoothing = 0.12; // 0..1 smoothing per frame (higher = faster)
+  // reduce smoothing factor to slow the transition (more smoothing)
+  var _flipSmoothing = 0.06; // 0..1 smoothing per frame (smaller = slower, smoother)
 
   function animateFoxFlip(){
     // simple exponential / lerp smoothing each frame
