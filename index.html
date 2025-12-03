@@ -160,6 +160,20 @@
         <button id="foxClothLoadDefault">載入預設偽裝</button>
       </div>
     </div>
+    <!--
+      場景層次圖片 (Scene layer textures)
+      -------------------------------
+      以下區域列出目前在畫布上使用的場景貼圖 (u_tex0 .. u_tex5)。
+      這裡提供直接替換上傳的輸入欄位，維護或更換時只需選取新圖片即可。
+      若你偏好直接以路徑管理，可修改 canvas 的 `data-textures` 屬性。
+    -->
+    <div style="margin-top:12px; border-top:1px solid rgba(0,0,0,0.04); padding-top:10px">
+      <label style="font-weight:600">場景圖層 (可替換)</label>
+      <div class="small">目前載入的圖層由前到後為 u_tex0 → u_tex5。點選右側選擇檔案可替換對應圖層。</div>
+      <div id="textureList" style="margin-top:8px; display:flex; flex-direction:column; gap:6px">
+        <!-- JS will populate items here: each row contains a label and a file input -->
+      </div>
+    </div>
   </div>
 </body>
 <script>
@@ -240,12 +254,89 @@
   // Texture Set 功能已暫時註解；改用原始 data-textures 並套用 uniforms
   // applyTextureSet(textureSetSelect.value || 0);
   // 將 data-textures 內的貼圖載入 canvas（原本 applyTextureSet 會做的事）
+  // store initial texture paths so we can restore them later
+  var initialTextures = (canvas.getAttribute('data-textures') || '').split(',').filter(function(t){ return t !== ''; });
   (function loadInitialTextures(){
-    var list = (canvas.getAttribute('data-textures') || '').split(',').filter(function(t){ return t !== ''; });
-    for(var i=0;i<list.length;i++){
-      sandbox.setUniform('u_tex'+i, list[i]);
+    // ensure array length is 6
+    for(var i=initialTextures.length;i<6;i++) initialTextures.push('');
+    for(var i=0;i<initialTextures.length;i++){
+      if(initialTextures[i] && initialTextures[i].length>0) sandbox.setUniform('u_tex'+i, initialTextures[i]);
     }
     updateUniforms();
+  })();
+
+  // ===== 场景贴图替换支援 (maintenance area) =====
+  // 這段會在 UI `#textureList` 中建立 u_tex0..u_tex5 的顯示與上傳控制，
+  // 方便直接替換場景層次圖片。也會在替換後同步更新 canvas 的 `data-textures` 屬性。
+    (function setupTextureReplaceUI(){
+    var container = document.getElementById('textureList');
+    if(!container) return;
+    // currentTextures holds the active sources (dataURLs or paths)
+    var currentTextures = initialTextures.slice();
+    for(var i=currentTextures.length;i<6;i++) currentTextures.push('');
+    for(var i=0;i<6;i++){
+      (function(idx){
+        var row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.alignItems = 'center';
+        row.style.gap = '8px';
+
+        var label = document.createElement('div');
+        label.style.flex = '1';
+        label.style.fontSize = '13px';
+        label.style.color = '#2b231f';
+        label.textContent = (currentTextures[idx] && currentTextures[idx].length>0) ? currentTextures[idx] : ('（未設定 u_tex' + idx + '）');
+        label.id = 'texLabel' + idx;
+
+        var fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = 'image/*';
+        fileInput.id = 'texFile' + idx;
+        fileInput.style.fontSize = '12px';
+
+        var resetBtn = document.createElement('button');
+        resetBtn.textContent = '還原';
+        resetBtn.style.fontSize = '12px';
+        resetBtn.title = '還原此圖層為預設來源';
+
+        fileInput.addEventListener('change', function(e){
+          var f = this.files && this.files[0];
+          if(!f) return;
+          var reader = new FileReader();
+          reader.onload = function(ev){
+            var dataUrl = ev.target.result;
+            // set as texture uniform and update label + data-textures
+            sandbox.setUniform('u_tex' + idx, dataUrl);
+            currentTextures[idx] = dataUrl;
+            canvas.setAttribute('data-textures', currentTextures.join(','));
+            var lab = document.getElementById('texLabel' + idx);
+            if(lab) lab.textContent = f.name || ('u_tex' + idx);
+            console.log('Replaced u_tex' + idx + ' with uploaded file:', f.name);
+          };
+          reader.readAsDataURL(f);
+        });
+
+        resetBtn.addEventListener('click', function(){
+          var orig = initialTextures[idx] || '';
+          currentTextures[idx] = orig;
+          if(orig && orig.length>0){
+            sandbox.setUniform('u_tex' + idx, orig);
+          } else {
+            // clear by setting an empty texture (no-op for GlslCanvas, but keep state)
+            // (optional) could set a 1x1 transparent dataURL here
+          }
+          canvas.setAttribute('data-textures', currentTextures.join(','));
+          var lab = document.getElementById('texLabel' + idx);
+          if(lab) lab.textContent = (orig && orig.length>0) ? orig : ('（未設定 u_tex' + idx + '）');
+          console.log('Restored u_tex' + idx + ' to initial source');
+        });
+
+        row.appendChild(label);
+        row.appendChild(fileInput);
+        row.appendChild(resetBtn);
+        container.appendChild(row);
+      })(i);
+    }
   })();
 
   // 載入狐狸素材並設定預設大小（放在最前景）
