@@ -35,7 +35,10 @@ uniform float u_debug;    // if >0.5, visualize layer alpha masks for debugging
 // 新增狐狸貼圖與滑鼠 / 大小 / 層級 uniforms
 uniform sampler2D u_fox;  // 狐狸貼圖（帶 alpha）
 uniform sampler2D u_foxCloth; // 狐狸服裝貼圖（帶 alpha）
+uniform sampler2D u_foxSit; // 狐狸坐下貼圖（帶 alpha）
+uniform sampler2D u_foxSitCloth; // 狐狸坐下服裝貼圖（帶 alpha）
 uniform vec2 u_foxResolution; // width,height of the fox texture in pixels
+uniform vec2 u_foxSitResolution; // 坐下貼圖的寬高
 uniform vec2 u_mouse;     // GlslCanvas 會自動填入滑鼠座標（像素空間）
 uniform float u_foxSize;  // 狐狸顯示寬度相對於畫布寬度 (可大於1.0)
 uniform float u_foxLayer; // 狐狸所在圖層索引：0 = 最前景, 5 = 最背後
@@ -43,6 +46,7 @@ uniform float u_foxOverlay; // if >0.5 draw fox as overlay after all layers
 uniform float u_foxFeather; // feather radius in pixels for soft edges
 uniform float u_foxFlip; // 0.0 = normal, 1.0 = horizontally flipped
 uniform float u_foxClothEnabled; // 0.0 = disabled, 1.0 = enabled
+uniform float u_foxMode; // 0.0 = 站立, 1.0 = 坐下
 
 // 亮度計算輔助（目前透明判斷主要使用 alpha，此函式保留以備擴充）
 float lum(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
@@ -87,8 +91,10 @@ float foxMaskAdjusted(vec4 foxS){
 
 // 取樣輔助：從狐狸貼圖取樣並可選擇水平翻轉
 vec4 sampleFox(vec2 local){
+	// 坐下模式也沿用目前的翻轉值，確保方向一致
+	float flipEff = clamp(u_foxFlip, 0.0, 1.0);
 	// 使用緩和的插值（ease in/out）並在中段衰減強度，減少翻轉時的拉伸感
-	float t = clamp(u_foxFlip, 0.0, 1.0);
+	float t = flipEff;
 	// 三次平滑階梯（cubical smoothstep）
 	float sE = t * t * (3.0 - 2.0 * t);
 	// 在中段進一步衰減插值幅度，使過渡期間不會過度扭曲
@@ -97,12 +103,15 @@ vec4 sampleFox(vec2 local){
 	vec2 s = vec2(x, local.y);
 	// 避免在 x=0 或 x=1 精準取樣，這會造成明顯切線；稍微 clamp 到內部避免 seam
 	s.x = clamp(s.x, 0.001, 0.999);
-	return texture2D(u_fox, s);
+	// 依模式選擇對應貼圖
+	vec4 texS = (u_foxMode <= 0.5) ? texture2D(u_fox, s) : texture2D(u_foxSit, s);
+	return texS;
 }
 
 // return the UV after flip/clamp so other textures (e.g., clothing) can use same coords
 vec2 getFoxUV(vec2 local){
-	float t = clamp(u_foxFlip, 0.0, 1.0);
+	float flipEff = clamp(u_foxFlip, 0.0, 1.0);
+	float t = flipEff;
 	float sE = t * t * (3.0 - 2.0 * t);
 	float eff = sE * (0.75 + 0.25 * sE);
 	float x = mix(local.x, 1.0 - local.x, eff);
@@ -114,7 +123,8 @@ vec2 getFoxUV(vec2 local){
 vec4 sampleFoxCloth(vec2 local){
 	if(u_foxClothEnabled <= 0.5) return vec4(0.0);
 	vec2 uv = getFoxUV(local);
-	return texture2D(u_foxCloth, uv);
+	// 依模式選擇服裝貼圖
+	return (u_foxMode <= 0.5) ? texture2D(u_foxCloth, uv) : texture2D(u_foxSitCloth, uv);
 }
 
 // 羽化遮罩：以 3x3 內核在貼圖 local 座標上模糊 alpha（u_foxFeather 為像素半徑）
@@ -150,7 +160,9 @@ float foxMaskFeathered(vec2 local){
 // 計算狐狸在畫面上顯示的像素寬高（含水平 padding），回傳 vec2(width_eff, height)
 vec2 foxPixelDims(){
 	float foxPixelW = max(u_foxSize * u_resolution.x, 1.0);
-	float aspect = (u_foxResolution.x > 0.0 && u_foxResolution.y > 0.0) ? (u_foxResolution.x / u_foxResolution.y) : 1.0;
+	// 依模式使用不同貼圖解析度
+	vec2 res = (u_foxMode <= 0.5) ? u_foxResolution : u_foxSitResolution;
+	float aspect = (res.x > 0.0 && res.y > 0.0) ? (res.x / res.y) : 1.0;
 	float foxPixelH = max(foxPixelW / aspect, 1.0);
 	float padFactor = 0.12;
 	float foxPixelW_eff = foxPixelW * (1.0 + padFactor);
@@ -228,7 +240,8 @@ vec2 foxLocalFromFragCoord(vec2 fragCoord){
 	// u_foxSize 表示狐狸寬度佔畫布寬度的比例（例如 0.2 = 20% 畫布寬度）
 	float foxPixelW = max(u_foxSize * u_resolution.x, 1.0);
 	// preserve texture aspect ratio: height = width * (texHeight/texWidth)
-	float aspect = (u_foxResolution.x > 0.0 && u_foxResolution.y > 0.0) ? (u_foxResolution.x / u_foxResolution.y) : 1.0;
+	vec2 res = (u_foxMode <= 0.5) ? u_foxResolution : u_foxSitResolution;
+	float aspect = (res.x > 0.0 && res.y > 0.0) ? (res.x / res.y) : 1.0;
 	float foxPixelH = max(foxPixelW / aspect, 1.0);
 	// add a small horizontal padding to avoid visible clipping at texture edges
 	// this slightly reduces displayed width so the fox won't be cut at extremes

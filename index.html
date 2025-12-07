@@ -266,6 +266,77 @@
     }
     updateUniforms();
   })();
+  // 載入「狐狸坐下」素材
+  (function loadFoxSitToCanvas(){
+    var img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = 'data/fox_sit_alpha.png';
+    img.onload = function(){
+      var c = document.createElement('canvas');
+      c.width = img.naturalWidth || img.width;
+      c.height = img.naturalHeight || img.height;
+      var ctx = c.getContext('2d');
+      ctx.clearRect(0,0,c.width,c.height);
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      try{
+        var imgData = ctx.getImageData(0,0,c.width,c.height);
+        var d = imgData.data;
+        for(var i=0;i<d.length;i+=4){
+          var a = d[i+3] / 255;
+          d[i] = Math.round(d[i] * a);
+          d[i+1] = Math.round(d[i+1] * a);
+          d[i+2] = Math.round(d[i+2] * a);
+        }
+        ctx.putImageData(imgData, 0, 0);
+      }catch(e){ console.warn('Premultiply sit image failed:', e); }
+      try{
+        var dataUrl = c.toDataURL('image/png');
+        sandbox.setUniform('u_foxSit', dataUrl);
+        sandbox.setUniform('u_foxSitResolution', c.width, c.height);
+        console.log('u_foxSit uploaded from canvas (dataURL):', c.width, 'x', c.height);
+      }catch(e){
+        console.warn('toDataURL failed for fox_sit:', e);
+        sandbox.setUniform('u_foxSit', img);
+        sandbox.setUniform('u_foxSitResolution', img.naturalWidth || img.width, img.naturalHeight || img.height);
+      }
+    };
+    img.onerror = function(e){ console.warn('Failed to load fox_sit_alpha.png:', e); };
+  })();
+
+  // 載入「狐狸坐下服裝」素材
+  (function loadFoxSitCloth(){
+    var img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = 'data/fox_sit_cloth.png';
+    img.onload = function(){
+      var c = document.createElement('canvas');
+      c.width = img.naturalWidth || img.width;
+      c.height = img.naturalHeight || img.height;
+      var ctx = c.getContext('2d');
+      ctx.clearRect(0,0,c.width,c.height);
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      try{
+        var imgData = ctx.getImageData(0,0,c.width,c.height);
+        var d = imgData.data;
+        for(var i=0;i<d.length;i+=4){
+          var a = d[i+3] / 255;
+          d[i] = Math.round(d[i] * a);
+          d[i+1] = Math.round(d[i+1] * a);
+          d[i+2] = Math.round(d[i+2] * a);
+        }
+        ctx.putImageData(imgData, 0, 0);
+      }catch(e){ console.warn('Premultiply sit cloth failed:', e); }
+      try{
+        var dataUrl = c.toDataURL('image/png');
+        sandbox.setUniform('u_foxSitCloth', dataUrl);
+        console.log('u_foxSitCloth uploaded from canvas (dataURL):', c.width, 'x', c.height);
+      }catch(e){
+        console.warn('toDataURL failed for fox_sit_cloth:', e);
+        sandbox.setUniform('u_foxSitCloth', img);
+      }
+    };
+    img.onerror = function(e){ console.warn('Failed to load fox_sit_cloth.png:', e); };
+  })();
 
   // ===== 场景贴图替换支援 (maintenance area) =====
   // 這段會在 UI `#textureList` 中建立 u_tex0..u_tex5 的顯示與上傳控制，
@@ -602,6 +673,16 @@
     } else if(e.key === 'ArrowRight'){
       e.preventDefault();
       moveFoxBack();
+    } else if(e.key === 'ArrowDown'){
+      e.preventDefault();
+      foxMode = 1;
+      horizontalEnabled = false;
+      sandbox.setUniform('u_foxMode', foxMode);
+    } else if(e.key === 'ArrowUp'){
+      e.preventDefault();
+      foxMode = 0;
+      horizontalEnabled = true;
+      sandbox.setUniform('u_foxMode', foxMode);
     }
   });
 
@@ -648,6 +729,11 @@
   // Fox feather fixed to 20px (slider removed)
   sandbox.setUniform('u_foxFeather', 20.0);
 
+  // 狐狸模式：0=站立(可左右移動)、1=坐下(不可左右移動)
+  var foxMode = 0;
+  var horizontalEnabled = true;
+  sandbox.setUniform('u_foxMode', foxMode);
+
   // 偵測 u_fox texture 是否有正確載入，並在載入完成時回報到 console（不要自動關閉偵錯）
   setTimeout(function(){
     console.log('GlslCanvas textures snapshot:', Object.keys(sandbox.textures || {}));
@@ -677,7 +763,12 @@
     var cssY = e.clientY - rect.top;
     var mx = cssX * (canvas.width / rect.width);
     var my = canvas.height - cssY * (canvas.height / rect.height);
-    sandbox.setUniform('u_mouse', mx, my);
+    if(horizontalEnabled){
+      sandbox.setUniform('u_mouse', mx, my);
+    } else {
+      // 保持前一次的 X（不更新水平移動）
+      sandbox.setUniform('u_mouse', _prevMouseX === null ? mx : _prevMouseX, my);
+    }
     // compute horizontal velocity (px/s) and update flip target accordingly
     var now = (window.performance && performance.now) ? performance.now() : Date.now();
     if(_prevMouseX === null || _prevTime === null){
@@ -686,9 +777,13 @@
     }
     var dt = Math.max(1.0, now - _prevTime); // ms
     var vx = (mx - _prevMouseX) / (dt / 1000.0); // px/s
-    // update target: moving right -> 1.0, moving left -> 0.0
-    if(vx > _flipThreshold) _foxFlipTarget = 1.0;
-    else if(vx < -_flipThreshold) _foxFlipTarget = 0.0;
+    // 更新翻轉目標：站立時依速度，坐下時固定不翻轉
+    if(foxMode === 0){
+      if(vx > _flipThreshold) _foxFlipTarget = 1.0;
+      else if(vx < -_flipThreshold) _foxFlipTarget = 0.0;
+    } else {
+      // 坐下時不更新翻轉目標，維持目前方向
+    }
     // remember previous for next velocity calc
     _prevMouseX = mx;
     _prevTime = now;
