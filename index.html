@@ -1085,14 +1085,19 @@
       var t1 = rD;          // threshold for D
       var t2 = rD + rB;     // threshold for B
       var t3 = rD + rB + rC;// threshold for C
+      // Apply common uniforms
       dccu.setUniform('u_scale', sc);
       dccu.setUniform('u_gridRotate', rt);
-      dccu.setUniform('u_cellBase', 12.0);
+      // Apply thresholds based on active shader
+      var kind = window.__dccuActiveKind || 'dccu';
       dccu.setUniform('u_thresh1', t1);
       dccu.setUniform('u_thresh2', t2);
-      dccu.setUniform('u_thresh3', t3);
-      // optional softness uniform if shader uses it later
-      dccu.setUniform('u_edgeSoftness', 8.0);
+      if(kind === 'dccu'){
+        // DCCU-only uniforms
+        dccu.setUniform('u_cellBase', 12.0);
+        dccu.setUniform('u_thresh3', t3);
+        dccu.setUniform('u_edgeSoftness', 8.0);
+      }
       // Update percentage labels for logging/testing
       if(dccuRatioDLabel) dccuRatioDLabel.textContent = Math.round(rD*100) + '%';
       if(dccuRatioBLabel) dccuRatioBLabel.textContent = Math.round(rB*100) + '%';
@@ -1103,6 +1108,8 @@
       var path = (kind === 'nato3') ? 'shader/nato_3_colors_camouflage.frag' : 'shader/dccu_camouflage.frag';
       // Recreate GlslCanvas instance with new fragment URL for reliability
       try{
+        // Track active kind to conditionally apply uniforms
+        window.__dccuActiveKind = kind;
         dccuCanvas.setAttribute('data-fragment-url', path);
         // Replace instance to ensure fresh program
         dccu = new GlslCanvas(dccuCanvas);
