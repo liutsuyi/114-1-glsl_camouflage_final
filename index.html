@@ -189,8 +189,8 @@
       <div class="small">在此預覽並調整 DCCU shader 參數。</div>
       <canvas id="dccuCanvas" width="360" height="240" data-fragment-url="shader/dccu_camouflage.frag" style="width:100%; height:auto; border-radius:8px; box-shadow:0 8px 22px rgba(0,0,0,0.35); background:#000; display:block; margin-top:8px"></canvas>
       <div style="margin-top:10px">
-        <label>Scale: <input id="dccuScale" type="range" min="0.8" max="5.0" step="0.01" value="1.2"></label>
-        <div class="small">圖樣密度縮放（最小值提高，範圍至 5.0）</div>
+        <label>Scale: <input id="dccuScale" type="range" min="0.1" max="5.0" step="0.01" value="1.0"></label>
+        <div class="small">圖樣密度縮放（最小 0.1，方塊可更大）</div>
       </div>
       <!-- 移除 Noise Amp 控制：效果不明顯，取消該參數 -->
       <div style="margin-top:8px">
@@ -200,10 +200,10 @@
       <div style="margin-top:8px">
         <label style="display:flex;align-items:center;gap:8px">比例：深 (D) <input id="dccuRatioD" type="range" min="0.0" max="1.0" step="0.01" value="0.36"><span id="dccuRatioDLabel" class="small">36%</span></label>
         <label style="display:flex;align-items:center;gap:8px">比例：暗 (B) <input id="dccuRatioB" type="range" min="0.0" max="1.0" step="0.01" value="0.22"><span id="dccuRatioBLabel" class="small">22%</span></label>
-        <label style="display:flex;align-items:center;gap:8px">比例：中 (C) <input id="dccuRatioC" type="range" min="0.0" max="1.0" step="0.01" value="0.14"><span id="dccuRatioCLabel" class="small">14%</span></label>
+        <label style="display:flex;align-items:center;gap:8px">比例：中 (C) <input id="dccuRatioC" type="range" min="0.0" max="1.0" step="0.01" value="0.13"><span id="dccuRatioCLabel" class="small">13%</span></label>
         <div class="small">三者相加後，其餘即為淺 (A)。系統自動正規化。</div>
       </div>
-      
+      <!-- Cell Size 效果不佳，已移除 -->
     </div>
   </div>
 </body>
@@ -1050,7 +1050,7 @@
     var dccuRatioDLabel = document.getElementById('dccuRatioDLabel');
     var dccuRatioBLabel = document.getElementById('dccuRatioBLabel');
     var dccuRatioCLabel = document.getElementById('dccuRatioCLabel');
-    // Cell Size 控制已移除
+    // Cell Size 已移除
     // Try to load reference swatch (NWU Type I) if available
     var refCandidates = ['data/NWU_Type_I_camouflage_pattern_swatch.png','data/NWU_Type_I_camouflage_pattern_swatch.jpg','data/NWU_Type_I_camouflage_pattern_swatch.jpeg'];
     (function loadRef(){
@@ -1078,7 +1078,7 @@
       var t3 = rD + rB + rC;// threshold for C
       dccu.setUniform('u_scale', sc);
       dccu.setUniform('u_gridRotate', rt);
-      // u_cellBase 維持預設或由 shader 內部處理
+      dccu.setUniform('u_cellBase', 12.0);
       dccu.setUniform('u_thresh1', t1);
       dccu.setUniform('u_thresh2', t2);
       dccu.setUniform('u_thresh3', t3);
@@ -1098,7 +1098,7 @@
     if(dccuRatioD) dccuRatioD.addEventListener('input', applyDCCU);
     if(dccuRatioB) dccuRatioB.addEventListener('input', applyDCCU);
     if(dccuRatioC) dccuRatioC.addEventListener('input', applyDCCU);
-    // Cell Size 控制已移除
+    // dccuCellSize removed
     // simple time uniform for potential animation hooks
     function tick(){
       var t = (window.performance && performance.now) ? performance.now()/1000.0 : Date.now()/1000.0;
