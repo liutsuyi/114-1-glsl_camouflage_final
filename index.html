@@ -48,6 +48,9 @@
       box-shadow: 0 8px 28px rgba(6,10,8,0.6);
       /* 擴寬控制面板到約 140%（240 * 1.4 ≈ 336px） */
       max-width: 336px;
+      /* 高度將在 JS 依 canvas 高度設定，這裡預設允許滾動 */
+      max-height: none;
+      overflow: hidden;
       border: 1px solid rgba(30,30,30,0.04);
     }
 
@@ -171,9 +174,31 @@
     -->
     <div style="margin-top:12px; border-top:1px solid rgba(0,0,0,0.04); padding-top:10px">
       <label style="font-weight:600">場景圖層 (可替換)</label>
-      <div class="small">目前載入的圖層由前到後為 u_tex0 → u_tex5。點選右側選擇檔案可替換對應圖層。</div>
-      <div id="textureList" style="margin-top:8px; display:flex; flex-direction:column; gap:6px">
-        <!-- JS will populate items here: each row contains a label and a file input -->
+      <div class="small">u_tex0 → u_tex5。若需更改，展開清單進行替換。</div>
+      <details id="textureListWrap" style="margin-top:6px">
+        <summary style="cursor:pointer; font-size:13px; color:#2b231f">展開/收合圖層清單</summary>
+        <div id="textureList" style="margin-top:8px; display:flex; flex-direction:column; gap:6px; max-height: 180px; overflow:auto">
+          <!-- JS will populate items here: each row contains a label and a file input -->
+        </div>
+      </details>
+    </div>
+
+    <!-- DCCU Camouflage Preview Block -->
+    <div style="margin-top:12px; border-top:1px solid rgba(0,0,0,0.04); padding-top:10px">
+      <label style="font-weight:600">DCCU 迷彩預覽</label>
+      <div class="small">在此預覽並調整 DCCU shader 參數。</div>
+      <canvas id="dccuCanvas" width="360" height="240" data-fragment-url="shader/dccu_camouflage.frag" style="width:100%; height:auto; border-radius:8px; box-shadow:0 8px 22px rgba(0,0,0,0.35); background:#000; display:block; margin-top:8px"></canvas>
+      <div style="margin-top:10px">
+        <label>Scale: <input id="dccuScale" type="range" min="0.5" max="2.5" step="0.01" value="1.0"></label>
+        <div class="small">圖樣密度縮放</div>
+      </div>
+      <div style="margin-top:8px">
+        <label>Noise Amp: <input id="dccuNoise" type="range" min="0.0" max="0.35" step="0.005" value="0.08"></label>
+        <div class="small">邊緣抖動幅度</div>
+      </div>
+      <div style="margin-top:8px">
+        <label>Rotate: <input id="dccuRotate" type="range" min="-25" max="25" step="0.5" value="-6"></label>
+        <div class="small">格網輕微旋轉 (度數)</div>
       </div>
     </div>
   </div>
@@ -977,6 +1002,9 @@
     if(left < 10) left = 10;
     var top = Math.round(crect.top + crect.height/2 - uiH/2);
     if(top < 10) top = 10;
+    // 讓側邊面板高度與 canvas 高度切齊
+    ui.style.height = Math.round(crect.height) + 'px';
+    ui.style.overflow = 'auto';
     ui.style.left = left + 'px';
     ui.style.top = top + 'px';
     ui.style.transform = 'none';
@@ -991,6 +1019,56 @@
   });
   // also reposition shortly after initial apply to account for fonts/images
   setTimeout(positionUI, 120);
+
+  // ================= DCCU Camouflage Preview =================
+  (function initDCCUPreview(){
+    var dccuCanvas = document.getElementById('dccuCanvas');
+    if(!dccuCanvas) return;
+    var dccu = new GlslCanvas(dccuCanvas);
+    // Resize drawing buffer to match CSS size and DPR
+    function resizeDCCU(){
+      var dpr = (window.devicePixelRatio || 1);
+      var cssW = dccuCanvas.clientWidth || 360;
+      var cssH = Math.round(cssW * 2.0/3.0); // keep 3:2 aspect in preview
+      dccuCanvas.style.height = cssH + 'px';
+      dccuCanvas.width = Math.round(cssW * dpr);
+      dccuCanvas.height = Math.round(cssH * dpr);
+      dccu.setUniform('u_resolution', dccuCanvas.width, dccuCanvas.height);
+    }
+    resizeDCCU();
+    // Parameters UI
+    var dccuScale = document.getElementById('dccuScale');
+    var dccuNoise = document.getElementById('dccuNoise');
+    var dccuRotate = document.getElementById('dccuRotate');
+    function applyDCCU(){
+      var sc = parseFloat(dccuScale.value || '1.0');
+      var na = parseFloat(dccuNoise.value || '0.08');
+      var rt = parseFloat(dccuRotate.value || '0.0');
+      dccu.setUniform('u_scale', sc);
+      dccu.setUniform('u_noiseAmp', na);
+      dccu.setUniform('u_gridRotate', rt);
+      // optional softness uniform if shader uses it later
+      dccu.setUniform('u_edgeSoftness', 8.0);
+    }
+    // initial set
+    applyDCCU();
+    // bind inputs
+    if(dccuScale) dccuScale.addEventListener('input', applyDCCU);
+    if(dccuNoise) dccuNoise.addEventListener('input', applyDCCU);
+    if(dccuRotate) dccuRotate.addEventListener('input', applyDCCU);
+    // simple time uniform for potential animation hooks
+    function tick(){
+      var t = (window.performance && performance.now) ? performance.now()/1000.0 : Date.now()/1000.0;
+      dccu.setUniform('u_time', t);
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+    // keep preview sized within panel on window resize
+    window.addEventListener('resize', function(){
+      clearTimeout(window.__dccuResizeTimer);
+      window.__dccuResizeTimer = setTimeout(function(){ resizeDCCU(); applyDCCU(); }, 80);
+    });
+  })();
 </script>
 
 </html>
