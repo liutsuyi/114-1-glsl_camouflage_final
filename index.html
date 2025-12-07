@@ -187,6 +187,14 @@
     <div style="margin-top:12px; border-top:1px solid rgba(0,0,0,0.04); padding-top:10px">
       <label style="font-weight:600">DCCU 迷彩預覽</label>
       <div class="small">在此預覽並調整 DCCU shader 參數。</div>
+      <div style="margin-top:8px">
+        <label>預覽 Shader:
+          <select id="dccuShaderSelect" style="width:100%">
+            <option value="dccu">Taiwan DCCU</option>
+            <option value="nato3">NATO 3 Colors</option>
+          </select>
+        </label>
+      </div>
       <canvas id="dccuCanvas" width="360" height="240" data-fragment-url="shader/dccu_camouflage.frag" style="width:100%; height:auto; border-radius:8px; box-shadow:0 8px 22px rgba(0,0,0,0.35); background:#000; display:block; margin-top:8px"></canvas>
       <div style="margin-top:10px">
         <label>Scale: <input id="dccuScale" type="range" min="0.1" max="5.0" step="0.01" value="1.0"></label>
@@ -1029,6 +1037,7 @@
     var dccuCanvas = document.getElementById('dccuCanvas');
     if(!dccuCanvas) return;
     var dccu = new GlslCanvas(dccuCanvas);
+    var dccuShaderSelect = document.getElementById('dccuShaderSelect');
     // Resize drawing buffer to match CSS size and DPR
     function resizeDCCU(){
       var dpr = (window.devicePixelRatio || 1);
@@ -1089,8 +1098,29 @@
       if(dccuRatioBLabel) dccuRatioBLabel.textContent = Math.round(rB*100) + '%';
       if(dccuRatioCLabel) dccuRatioCLabel.textContent = Math.round(rC*100) + '%';
     }
+    // Switch preview shader by loading fragment source
+    function switchPreviewShader(kind){
+      var path = (kind === 'nato3') ? 'shader/nato_3_colors_camouflage.frag' : 'shader/dccu_camouflage.frag';
+      // Recreate GlslCanvas instance with new fragment URL for reliability
+      try{
+        dccuCanvas.setAttribute('data-fragment-url', path);
+        // Replace instance to ensure fresh program
+        dccu = new GlslCanvas(dccuCanvas);
+        // Reapply resolution and uniforms
+        resizeDCCU();
+        applyDCCU();
+      }catch(e){ console.warn('Switch shader failed for', path, e); }
+    }
     // initial set
     applyDCCU();
+    // ensure default is DCCU; allow switch to NATO 3 Colors
+    if(dccuShaderSelect){
+      dccuShaderSelect.addEventListener('change', function(){ switchPreviewShader(this.value); });
+      // load default (Taiwan DCCU)
+      switchPreviewShader('dccu');
+    } else {
+      switchPreviewShader('dccu');
+    }
     // bind inputs
     if(dccuScale) dccuScale.addEventListener('input', applyDCCU);
     // dccuNoise removed
