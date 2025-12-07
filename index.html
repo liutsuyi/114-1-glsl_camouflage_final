@@ -183,6 +183,7 @@
   var sandbox = new GlslCanvas(canvas);
   // Mouse-movement flip state (velocity-driven, smoothed)
   var _prevMouseX = null;
+  var _prevMouseY = null;
   var _prevTime = null;
   var _foxFlipValue = 0.0;   // current (smoothed) flip value 0..1
   var _foxFlipTarget = 0.0;  // desired flip target (0 or 1)
@@ -677,11 +678,25 @@
       e.preventDefault();
       foxMode = 1;
       horizontalEnabled = false;
+      movementEnabled = false;
+      // 建立坐下錨點為最後已知位置
+      sitAnchorX = (_lastSetMouseX !== null) ? _lastSetMouseX : _prevMouseX;
+      sitAnchorY = (_lastSetMouseY !== null) ? _lastSetMouseY : _prevMouseY;
+      // 記錄背景 UV 錨點
+      sitAnchorUVx = (sitAnchorX !== null && canvas.width) ? (sitAnchorX / canvas.width) : null;
+      sitAnchorUVy = (sitAnchorY !== null && canvas.height) ? (sitAnchorY / canvas.height) : null;
+      // 暫時移除滑鼠事件，避免外部更新影響
+      canvas.removeEventListener('mousemove', updateMouseUniform);
       sandbox.setUniform('u_foxMode', foxMode);
     } else if(e.key === 'ArrowUp'){
       e.preventDefault();
       foxMode = 0;
       horizontalEnabled = true;
+      movementEnabled = true;
+      sitAnchorX = null; sitAnchorY = null;
+      sitAnchorUVx = null; sitAnchorUVy = null;
+      // 恢復滑鼠事件
+      canvas.addEventListener('mousemove', updateMouseUniform);
       sandbox.setUniform('u_foxMode', foxMode);
     }
   });
@@ -732,6 +747,11 @@
   // 狐狸模式：0=站立(可左右移動)、1=坐下(不可左右移動)
   var foxMode = 0;
   var horizontalEnabled = true;
+  // 坐下時固定位置（不隨滑鼠），站立時恢復移動
+  var movementEnabled = true;
+  var sitAnchorX = null, sitAnchorY = null;
+  // 以背景貼圖座標（UV 0..1）作為坐下錨點
+  var sitAnchorUVx = null, sitAnchorUVy = null;
   sandbox.setUniform('u_foxMode', foxMode);
 
   // 偵測 u_fox texture 是否有正確載入，並在載入完成時回報到 console（不要自動關閉偵錯）
@@ -755,24 +775,50 @@
 
   // 確保 shader 能接收到滑鼠座標：手動在 JS 層傳入 u_mouse（像素空間），
   // 因為 GlslCanvas 只有在 shader 中出現多次 u_mouse 時才會自動更新。
+  // 包裝 setMouse 以記錄最後設定的座標，供坐下錨點使用
+  var _lastSetMouseX = null, _lastSetMouseY = null;
+  function setMouse(x,y){ sandbox.setUniform('u_mouse', x, y); _lastSetMouseX = x; _lastSetMouseY = y; }
+  // 坐下時每幀強制錨定位置，避免任何外部更新造成位移
+  function enforceSitAnchor(){
+    if(!movementEnabled){
+      var ax = (sitAnchorUVx !== null) ? (sitAnchorUVx * canvas.width) : (sitAnchorX !== null ? sitAnchorX : (_lastSetMouseX !== null ? _lastSetMouseX : canvas.width*0.5));
+      var ay = (sitAnchorUVy !== null) ? (sitAnchorUVy * canvas.height) : (sitAnchorY !== null ? sitAnchorY : (_lastSetMouseY !== null ? _lastSetMouseY : canvas.height*0.5));
+      setMouse(ax, ay);
+    }
+    requestAnimationFrame(enforceSitAnchor);
+  }
+  requestAnimationFrame(enforceSitAnchor);
   function updateMouseUniform(e){
     var rect = canvas.getBoundingClientRect();
     // Map CSS mouse coordinates to the canvas drawing buffer pixel coordinates
     // canvas.width/height are the actual drawingbuffer sizes (may be scaled by DPR)
     var cssX = e.clientX - rect.left;
     var cssY = e.clientY - rect.top;
-    var mx = cssX * (canvas.width / rect.width);
-    var my = canvas.height - cssY * (canvas.height / rect.height);
-    if(horizontalEnabled){
-      sandbox.setUniform('u_mouse', mx, my);
+    var scaleX = canvas.width / rect.width;
+    var scaleY = canvas.height / rect.height;
+    // 以 canvas 座標為基準（背景 UV 對齊）：X 從左到右線性，Y 從下到上
+    var mx = cssX * scaleX;
+    var my = (rect.bottom - e.clientY) * scaleY;
+    if(movementEnabled){
+      if(horizontalEnabled){
+        setMouse(mx, my);
+      } else {
+        // 保持前一次的 X（不更新水平移動）
+        setMouse(_prevMouseX === null ? mx : _prevMouseX, my);
+      }
     } else {
-      // 保持前一次的 X（不更新水平移動）
-      sandbox.setUniform('u_mouse', _prevMouseX === null ? mx : _prevMouseX, my);
+      // 坐下：位置固定在切換時的錨點（以背景 UV 基準）
+      var ax = (sitAnchorUVx !== null) ? (sitAnchorUVx * canvas.width) : ((sitAnchorX === null) ? (_lastSetMouseX !== null ? _lastSetMouseX : (_prevMouseX === null ? mx : _prevMouseX)) : sitAnchorX);
+      var ay = (sitAnchorUVy !== null) ? (sitAnchorUVy * canvas.height) : ((sitAnchorY === null) ? (_lastSetMouseY !== null ? _lastSetMouseY : my) : sitAnchorY);
+      setMouse(ax, ay);
+      // 坐下時不更新前次狀態與速度，直接返回
+      return;
     }
     // compute horizontal velocity (px/s) and update flip target accordingly
     var now = (window.performance && performance.now) ? performance.now() : Date.now();
     if(_prevMouseX === null || _prevTime === null){
       _prevMouseX = mx;
+      _prevMouseY = my;
       _prevTime = now;
     }
     var dt = Math.max(1.0, now - _prevTime); // ms
@@ -786,6 +832,7 @@
     }
     // remember previous for next velocity calc
     _prevMouseX = mx;
+    _prevMouseY = my;
     _prevTime = now;
     // debug log for verification
     if(window.__mouseDebugCounter === undefined) window.__mouseDebugCounter = 0;
@@ -801,7 +848,7 @@
     setTimeout(function(){
       var mx = canvas.width / 2.0;
       var my = canvas.height / 2.0;
-      sandbox.setUniform('u_mouse', mx, my);
+      setMouse(mx, my);
       // set initial flip based on center (defaults to not flipped)
       var initialFlip = (mx > (canvas.width * 0.5)) ? 1.0 : 0.0;
       _foxFlipValue = initialFlip;
@@ -809,6 +856,7 @@
       sandbox.setUniform('u_foxFlip', initialFlip);
       // initialize prev mouse/time for velocity calc
       _prevMouseX = mx;
+      _prevMouseY = my;
       _prevTime = (window.performance && performance.now) ? performance.now() : Date.now();
       // DOM fox removed; no DOM positioning necessary
       console.log('initial u_mouse (px)=', mx, my, 'canvas draw size=', canvas.width, 'x', canvas.height);
