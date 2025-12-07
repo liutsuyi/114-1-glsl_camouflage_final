@@ -39,7 +39,7 @@ uniform sampler2D u_foxSit; // 狐狸坐下貼圖（帶 alpha）
 uniform sampler2D u_foxSitCloth; // 狐狸坐下服裝貼圖（帶 alpha）
 uniform vec2 u_foxResolution; // width,height of the fox texture in pixels
 uniform vec2 u_foxSitResolution; // 坐下貼圖的寬高
-uniform vec2 u_mouse;     // GlslCanvas 會自動填入滑鼠座標（像素空間）
+uniform vec2 u_mouseCustom; // 自訂滑鼠座標（像素空間），避免 GlslCanvas 內建 u_mouse 介入
 uniform float u_foxSize;  // 狐狸顯示寬度相對於畫布寬度 (可大於1.0)
 uniform float u_foxLayer; // 狐狸所在圖層索引：0 = 最前景, 5 = 最背後
 uniform float u_foxOverlay; // if >0.5 draw fox as overlay after all layers
@@ -236,7 +236,7 @@ vec4 blurFox(vec2 local, vec2 pixelDims, float radiusPx){
 
 // 計算狐狸貼圖的 local (0..1) 座標，使用像素空間的尺寸計算以避免寬高比錯誤
 vec2 foxLocalFromFragCoord(vec2 fragCoord){
-	// 使用像素空間計算：fragCoord 和 u_mouse 都是以 drawingbuffer pixels 傳入
+	// 使用像素空間計算：fragCoord 和 u_mouseCustom 都是以 drawingbuffer pixels 傳入
 	// u_foxSize 表示狐狸寬度佔畫布寬度的比例（例如 0.2 = 20% 畫布寬度）
 	float foxPixelW = max(u_foxSize * u_resolution.x, 1.0);
 	// preserve texture aspect ratio: height = width * (texHeight/texWidth)
@@ -247,7 +247,7 @@ vec2 foxLocalFromFragCoord(vec2 fragCoord){
 	// this slightly reduces displayed width so the fox won't be cut at extremes
 	float padFactor = 0.12; // 6% extra horizontal padding
 	float foxPixelW_eff = foxPixelW * (1.0 + padFactor);
-	vec2 local = (fragCoord - u_mouse) / vec2(foxPixelW_eff, foxPixelH) + vec2(0.5);
+	vec2 local = (fragCoord - u_mouseCustom) / vec2(foxPixelW_eff, foxPixelH) + vec2(0.5);
 	return local;
 }
 

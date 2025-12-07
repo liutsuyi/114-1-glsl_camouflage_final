@@ -698,6 +698,33 @@
       canvas.addEventListener('pointermove', window.__blockPointerMove, true);
       canvas.addEventListener('touchmove', window.__blockTouchMove, { capture: true, passive: false });
       sandbox.setUniform('u_foxMode', foxMode);
+    // 全局安裝事件阻擋，避免 GlslCanvas 內建更新 u_mouse 造成「貼齊」而非阻尼
+    (function installGlobalBlockers(){
+      if(!window.__blockersInstalled){
+        window.__blockersInstalled = true;
+        // 僅在事件座標落在 canvas 範圍內時阻擋（捕獲階段），避免影響整頁其他互動
+        window.__blockMouseMove = function(ev){
+          var rect = canvas.getBoundingClientRect();
+          var inside = ev.clientX >= rect.left && ev.clientX <= rect.right && ev.clientY >= rect.top && ev.clientY <= rect.bottom;
+          if(inside){ ev.stopImmediatePropagation(); ev.stopPropagation(); ev.preventDefault(); }
+        };
+        window.__blockPointerMove = function(ev){
+          var rect = canvas.getBoundingClientRect();
+          var inside = ev.clientX >= rect.left && ev.clientX <= rect.right && ev.clientY >= rect.top && ev.clientY <= rect.bottom;
+          if(inside){ ev.stopImmediatePropagation(); ev.stopPropagation(); ev.preventDefault(); }
+        };
+        window.__blockTouchMove = function(ev){
+          var rect = canvas.getBoundingClientRect();
+          var touches = ev.touches && ev.touches.length ? Array.from(ev.touches) : [];
+          var inside = touches.some(function(t){ return t.clientX >= rect.left && t.clientX <= rect.right && t.clientY >= rect.top && t.clientY <= rect.bottom; });
+          if(inside){ ev.stopImmediatePropagation(); ev.stopPropagation(); ev.preventDefault(); }
+        };
+        // 在 window 捕獲階段攔截，確保先於 GlslCanvas
+        window.addEventListener('mousemove', window.__blockMouseMove, true);
+        window.addEventListener('pointermove', window.__blockPointerMove, true);
+        window.addEventListener('touchmove', window.__blockTouchMove, { capture: true, passive: false });
+      }
+    })();
     } else if(e.key === 'ArrowUp'){
       e.preventDefault();
       foxMode = 0;
@@ -802,7 +829,7 @@
   // 因為 GlslCanvas 只有在 shader 中出現多次 u_mouse 時才會自動更新。
   // 包裝 setMouse 以記錄最後設定的座標，供坐下錨點使用
   var _lastSetMouseX = null, _lastSetMouseY = null;
-  function setMouse(x,y){ sandbox.setUniform('u_mouse', x, y); _lastSetMouseX = x; _lastSetMouseY = y; }
+  function setMouse(x,y){ sandbox.setUniform('u_mouseCustom', x, y); _lastSetMouseX = x; _lastSetMouseY = y; }
   // 坐下時每幀強制錨定位置，避免任何外部更新造成位移
   function enforceSitAnchor(){
     if(!movementEnabled){
@@ -906,9 +933,11 @@
     if(window.__mouseDebugCounter === undefined) window.__mouseDebugCounter = 0;
     if((window.__mouseDebugCounter++ % 50) === 0){
       console.log('u_mouse (px)=', mx.toFixed(1), my.toFixed(1), 'canvas draw size=', canvas.width, 'x', canvas.height, 'rect size=', rect.width.toFixed(1), 'x', rect.height.toFixed(1));
+      console.log('u_mouseCustom (px)=', mx.toFixed(1), my.toFixed(1), 'canvas draw size=', canvas.width, 'x', canvas.height, 'rect size=', rect.width.toFixed(1), 'x', rect.height.toFixed(1));
     }
   }
-  canvas.addEventListener('mousemove', updateMouseUniform);
+  // 轉為在 window 層級監聽滑鼠移動，確保我們的邏輯先處理
+  window.addEventListener('mousemove', updateMouseUniform);
   // 設定初始滑鼠位置為畫布中心
   // set initial mouse to canvas center using drawingbuffer coordinates
   (function setInitialMouse(){
@@ -928,6 +957,7 @@
       _prevTime = (window.performance && performance.now) ? performance.now() : Date.now();
       // DOM fox removed; no DOM positioning necessary
       console.log('initial u_mouse (px)=', mx, my, 'canvas draw size=', canvas.width, 'x', canvas.height);
+      console.log('initial u_mouseCustom (px)=', mx, my, 'canvas draw size=', canvas.width, 'x', canvas.height);
     }, 100);
   })();
   // no DOM fox overlay to synchronize
