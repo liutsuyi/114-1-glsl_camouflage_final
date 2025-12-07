@@ -26,8 +26,8 @@
       position: absolute;
       top: 50%;
       left: 60%;
-      /* 將 shader 畫面等比例放大到 120% */
-      transform: translate(-50%, -50%) scale(1.2);
+      /* 移除 CSS 變形縮放，改用實際像素尺寸 */
+      transform: translate(-50%, -50%);
       border-radius: 10px;
       box-shadow: 0 18px 40px rgba(0,0,0,0.6);
       background: #000;
@@ -112,7 +112,7 @@
 </head>
 
 <body>
-  <canvas id="glslCanvas" data-fragment-url="shader/environment_v1.frag" width="900" height="600"
+  <canvas id="glslCanvas" data-fragment-url="shader/environment_v1.frag" width="1080" height="720"
     data-textures="data/0_Top%20Canopy%20Leaves_alpha.png,data/1_Foreground_alpha.png,data/2_Mid-Foreground_alpha.png,data/3_Midground_alpha.png,data/4_Back-Midground_alpha.png,data/5_Background.png"></canvas>
 
   <!-- UI: focus & max blur sliders -->
@@ -687,6 +687,16 @@
       sitAnchorUVy = (sitAnchorY !== null && canvas.height) ? (sitAnchorY / canvas.height) : null;
       // 暫時移除滑鼠事件，避免外部更新影響
       canvas.removeEventListener('mousemove', updateMouseUniform);
+      // 阻擋事件傳遞給 GlslCanvas 內建滑鼠更新（捕獲階段攔截）
+      if(!window.__blockersInstalled){
+        window.__blockersInstalled = true;
+        window.__blockMouseMove = function(ev){ ev.stopImmediatePropagation(); ev.stopPropagation(); ev.preventDefault(); };
+        window.__blockPointerMove = function(ev){ ev.stopImmediatePropagation(); ev.stopPropagation(); ev.preventDefault(); };
+        window.__blockTouchMove = function(ev){ ev.stopImmediatePropagation(); ev.stopPropagation(); ev.preventDefault(); };
+      }
+      canvas.addEventListener('mousemove', window.__blockMouseMove, true);
+      canvas.addEventListener('pointermove', window.__blockPointerMove, true);
+      canvas.addEventListener('touchmove', window.__blockTouchMove, { capture: true, passive: false });
       sandbox.setUniform('u_foxMode', foxMode);
     } else if(e.key === 'ArrowUp'){
       e.preventDefault();
@@ -697,6 +707,12 @@
       sitAnchorUVx = null; sitAnchorUVy = null;
       // 恢復滑鼠事件
       canvas.addEventListener('mousemove', updateMouseUniform);
+      // 解除事件阻擋，恢復 GlslCanvas 內建滑鼠更新
+      if(window.__blockersInstalled){
+        canvas.removeEventListener('mousemove', window.__blockMouseMove, true);
+        canvas.removeEventListener('pointermove', window.__blockPointerMove, true);
+        canvas.removeEventListener('touchmove', window.__blockTouchMove, { capture: true });
+      }
       sandbox.setUniform('u_foxMode', foxMode);
     }
   });
@@ -754,6 +770,15 @@
   var sitAnchorUVx = null, sitAnchorUVy = null;
   sandbox.setUniform('u_foxMode', foxMode);
 
+  // 漸進式跟隨：目標滑鼠座標（像素）與目前跟隨座標（像素）
+  var _targetMouseX = null, _targetMouseY = null;
+  var _followMouseX = null, _followMouseY = null;
+  // 速度＋阻尼模型參數（臨界阻尼彈簧）
+  var _velX = 0.0, _velY = 0.0;
+  var _stiffness = 12.0;  // k：越大越快接近目標
+  var _damping = 2.0 * Math.sqrt(_stiffness); // c：臨界阻尼（c = 2*sqrt(k)）
+  var _maxSpeed = 1600;   // 限制最大速度避免振盪過快
+
   // 偵測 u_fox texture 是否有正確載入，並在載入完成時回報到 console（不要自動關閉偵錯）
   setTimeout(function(){
     console.log('GlslCanvas textures snapshot:', Object.keys(sandbox.textures || {}));
@@ -788,6 +813,48 @@
     requestAnimationFrame(enforceSitAnchor);
   }
   requestAnimationFrame(enforceSitAnchor);
+  // 站立模式下的漸進式跟隨更新：每幀把 _followMouse 向 _targetMouse 逼近
+  function updateFollow(){
+    var now = (window.performance && performance.now) ? performance.now() : Date.now();
+    if(window.__lastFollowTime === undefined) window.__lastFollowTime = now;
+    var dt = Math.min(0.05, Math.max(0.001, (now - window.__lastFollowTime) / 1000.0)); // 秒，限制步長
+    window.__lastFollowTime = now;
+    if(movementEnabled){
+      if(_targetMouseX === null || _targetMouseY === null){
+        // 尚未有目標，維持現況
+      } else {
+        if(_followMouseX === null || _followMouseY === null){
+          // 初始化跟隨位置在目前 shader 的 u_mouse
+          _followMouseX = (_lastSetMouseX !== null) ? _lastSetMouseX : _targetMouseX;
+          _followMouseY = (_lastSetMouseY !== null) ? _lastSetMouseY : _targetMouseY;
+        }
+        // 彈簧力：F = -k * x - c * v（臨界阻尼），x 為偏差，v 為速度
+        var dx = _targetMouseX - _followMouseX;
+        var dy = _targetMouseY - _followMouseY;
+        var ax = _stiffness * dx - _damping * _velX;
+        var ay = _stiffness * dy - _damping * _velY;
+        // 穩定積分（半顯式 Euler）
+        _velX += ax * dt;
+        _velY += ay * dt;
+        // 速度限制避免過快
+        var speed = Math.hypot(_velX, _velY);
+        if(speed > _maxSpeed){
+          var r = _maxSpeed / (speed || 1);
+          _velX *= r; _velY *= r;
+        }
+        // 水平禁用時不更新 X 速度與位置
+        if(horizontalEnabled){
+          _followMouseX += _velX * dt;
+        } else {
+          _velX = 0.0; // 清空水平速度
+        }
+        _followMouseY += _velY * dt;
+        setMouse(_followMouseX, _followMouseY);
+      }
+    }
+    requestAnimationFrame(updateFollow);
+  }
+  requestAnimationFrame(updateFollow);
   function updateMouseUniform(e){
     var rect = canvas.getBoundingClientRect();
     // Map CSS mouse coordinates to the canvas drawing buffer pixel coordinates
@@ -800,11 +867,12 @@
     var mx = cssX * scaleX;
     var my = (rect.bottom - e.clientY) * scaleY;
     if(movementEnabled){
-      if(horizontalEnabled){
-        setMouse(mx, my);
-      } else {
-        // 保持前一次的 X（不更新水平移動）
-        setMouse(_prevMouseX === null ? mx : _prevMouseX, my);
+      // 站立模式：只更新目標座標，實際座標由 updateFollow() 漸進逼近
+      _targetMouseX = mx;
+      _targetMouseY = my;
+      // 若水平禁用，保留目標 X 為當前跟隨 X（不改變水平目標）
+      if(!horizontalEnabled && _followMouseX !== null){
+        _targetMouseX = _followMouseX;
       }
     } else {
       // 坐下：位置固定在切換時的錨點（以背景 UV 基準）
