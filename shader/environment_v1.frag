@@ -129,8 +129,13 @@ vec4 sampleFoxCloth(vec2 local){
 
 // 羽化遮罩：以 3x3 內核在貼圖 local 座標上模糊 alpha（u_foxFeather 為像素半徑）
 float foxMaskFeathered(vec2 local){
-	// compute base mask from foxMaskAdjusted at center
-	float base = foxMaskAdjusted(sampleFox(local));
+	// 基礎遮罩：狐狸遮罩與衣服 alpha 的聯集（max），避免只有衣服時被完全遮蔽
+	float baseFox = foxMaskAdjusted(sampleFox(local));
+	float baseCloth = 0.0;
+	if(u_foxClothEnabled > 0.5){
+		baseCloth = sampleFoxCloth(local).a;
+	}
+	float base = max(baseFox, baseCloth);
 	if(u_foxFeather <= 0.5) return base;
 	// 將羽化的像素半徑轉換為 UV 空間的偏移（以貼圖最大邊長作為參考以近似各向同性）
 	float maxDim = max(u_foxResolution.x, u_foxResolution.y);
@@ -148,12 +153,11 @@ float foxMaskFeathered(vec2 local){
 	offs[8] = vec2( 1.0,  1.0) * radiusUV;
 	float sum = 0.0;
 	for(int i=0;i<9;i++){
-		vec4 s = sampleFox(local + offs[i]);
-		// use foxMaskAdjusted on each sample so premultiplied/brightness fallback is respected
-		sum += foxMaskAdjusted(s);
+		float mFox = foxMaskAdjusted(sampleFox(local + offs[i]));
+		float mCloth = (u_foxClothEnabled > 0.5) ? sampleFoxCloth(local + offs[i]).a : 0.0;
+		sum += max(mFox, mCloth);
 	}
 	float aBlur = sum / 9.0;
-	// return the blurred mask (so color will be multiplied by this soft alpha)
 	return aBlur;
 }
 

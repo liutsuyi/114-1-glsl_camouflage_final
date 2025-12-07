@@ -160,7 +160,9 @@
       <div class="small">按下切換按鈕可決定狐狸穿上或脫去偽裝服，偽裝服會使用當前迷彩預覽（DCCU 或 NATO）。</div>
       <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
         <button id="foxClothWearBtn" type="button" style="padding:6px 10px">穿上/脫去偽裝服</button>
+          <button id="foxClothTestBtn" type="button" style="padding:6px 10px">測試衣服顯示</button>
       </div>
+      <div class="small" style="margin-top:6px">狀態：Mode=<span id="foxModeLabel">stand</span>，Cloth=<span id="foxClothStatus">off</span></div>
     </div>
     <!--
       場景層次圖片 (Scene layer textures)
@@ -590,6 +592,9 @@
 
   // UI elements for cloth
   var foxClothWearBtn = document.getElementById('foxClothWearBtn');
+  var foxClothTestBtn = document.getElementById('foxClothTestBtn');
+  var foxClothStatusEl = document.getElementById('foxClothStatus');
+  var foxModeLabelEl = document.getElementById('foxModeLabel');
   // Track local cloth enabled state to avoid touching internal sandbox structures
   var _foxClothEnabledState = 0;
 
@@ -611,18 +616,93 @@
           // draw current camouflage preview scaled to mask canvas
           var dccuCanvas = document.getElementById('dccuCanvas');
           if(dccuCanvas){
-            ctx.drawImage(dccuCanvas, 0, 0, c.width, c.height);
+            // wait one or two frames to ensure preview has rendered, then snapshot
+            var doSnapshot = function(){
+              try{
+                var snapUrl = dccuCanvas.toDataURL('image/png');
+                var snapImg = new Image();
+                snapImg.onload = function(){
+                  ctx.drawImage(snapImg, 0, 0, c.width, c.height);
+                  // if snapshot is near-black, fallback to direct draw
+                  try{
+                    var test = ctx.getImageData(Math.floor(c.width/2), Math.floor(c.height/2), 1, 1).data;
+                    var L = (0.299*test[0] + 0.587*test[1] + 0.114*test[2]) / 255;
+                    if(L < 0.02){
+                      ctx.clearRect(0,0,c.width,c.height);
+                      ctx.drawImage(dccuCanvas, 0, 0, c.width, c.height);
+                    }
+                  }catch(e){}
+                  continueBuild();
+                };
+                snapImg.onerror = function(){
+                  // fallback: draw canvas directly
+                  ctx.drawImage(dccuCanvas, 0, 0, c.width, c.height);
+                  continueBuild();
+                };
+                snapImg.src = snapUrl;
+              }catch(e){
+                // fallback: draw canvas directly
+                ctx.drawImage(dccuCanvas, 0, 0, c.width, c.height);
+                continueBuild();
+              }
+            };
+            requestAnimationFrame(function(){ requestAnimationFrame(doSnapshot); });
+            // early return; continue after snapshot
+            return;
           } else {
             // fallback: fill with green base
             ctx.fillStyle = '#506635';
             ctx.fillRect(0,0,c.width,c.height);
           }
-          // clip with mask alpha using destination-in
-          ctx.globalCompositeOperation = 'destination-in';
-          ctx.drawImage(img, 0, 0, c.width, c.height);
-          // export
-          var dataUrl = c.toDataURL('image/png');
-          resolve(dataUrl);
+          // proceed to build alpha
+          function continueBuild(){
+            // Build alpha mask from mask image: prefer its alpha; fallback to luminance if alpha is 0
+            try{
+              // draw mask into a temp canvas to read pixels
+              var m = document.createElement('canvas');
+              m.width = c.width; m.height = c.height;
+              var mctx = m.getContext('2d');
+              mctx.clearRect(0,0,m.width,m.height);
+              mctx.drawImage(img, 0, 0, m.width, m.height);
+              var maskData = mctx.getImageData(0,0,m.width,m.height);
+              var clothData = ctx.getImageData(0,0,c.width,c.height);
+              var md = maskData.data; var cd = clothData.data;
+              for(var i=0;i<cd.length;i+=4){
+                var ma = md[i+3];
+                // luminance from mask RGB
+                var ml = (0.299*md[i] + 0.587*md[i+1] + 0.114*md[i+2]);
+                // use alpha if present, else use luminance normalized
+                var maskA = ma>0 ? (ma/255) : Math.min(1.0, Math.max(0.0, ml/255));
+                // guard: apply a tiny minimum alpha to avoid fully black due to rounding
+                maskA = Math.max(maskA, 0.02);
+                // apply mask to cloth alpha
+                var newA = Math.round(maskA * 255);
+                // premultiply RGB by new alpha
+                cd[i]   = Math.round(cd[i]   * maskA);
+                cd[i+1] = Math.round(cd[i+1] * maskA);
+                cd[i+2] = Math.round(cd[i+2] * maskA);
+                cd[i+3] = newA;
+              }
+              ctx.putImageData(clothData, 0, 0);
+            }catch(e){
+              // Fallback: destination-in composite (may yield invisible if mask alpha is zero)
+              console.warn('Mask alpha build failed, falling back to destination-in:', e);
+              ctx.globalCompositeOperation = 'destination-in';
+              ctx.drawImage(img, 0, 0, c.width, c.height);
+              // premultiply after fallback
+              try{
+                var imgData2 = ctx.getImageData(0,0,c.width,c.height);
+                var d2 = imgData2.data;
+                for(var j=0;j<d2.length;j+=4){ var a2 = d2[j+3]/255; d2[j]=Math.round(d2[j]*a2); d2[j+1]=Math.round(d2[j+1]*a2); d2[j+2]=Math.round(d2[j+2]*a2);} 
+                ctx.putImageData(imgData2,0,0);
+              }catch(e2){ console.warn('Premultiply fallback failed:', e2); }
+            }
+            // export
+            var dataUrl = c.toDataURL('image/png');
+            resolve(dataUrl);
+          }
+          // If we didn't return early, run continueBuild synchronously
+          continueBuild();
         };
         img.onerror = function(e){ console.warn('Load mask failed', e); resolve(null); };
       }catch(e){ console.warn('generateClothDataURL failed', e); resolve(null); }
@@ -636,16 +716,86 @@
         _foxClothEnabledState = 0;
         sandbox.setUniform('u_foxClothEnabled', 0.0);
       } else {
+        // Ensure fox is within view: center position before wearing
+        try{
+          var cx = (canvas && canvas.width) ? canvas.width * 0.5 : 540;
+          var cy = (canvas && canvas.height) ? canvas.height * 0.5 : 360;
+          if(typeof setMouse === 'function') setMouse(cx, cy);
+        }catch(e){}
+        // Capture mode at click-time to avoid race
         var useSit = (typeof foxMode !== 'undefined' && foxMode === 1);
         var dataUrl = await generateClothDataURL(useSit);
         if(dataUrl){
+          // Bind to both samplers to avoid mode mismatch glitches
           sandbox.setUniform('u_foxCloth', dataUrl);
-          _foxClothEnabledState = 1;
-          sandbox.setUniform('u_foxClothEnabled', 1.0);
+          sandbox.setUniform('u_foxSitCloth', dataUrl);
+          try{
+            var tmpImgA = new Image(); tmpImgA.onload = function(){ sandbox.setUniform('u_foxClothResolution', tmpImgA.naturalWidth || tmpImgA.width, tmpImgA.naturalHeight || tmpImgA.height); }; tmpImgA.src = dataUrl;
+            var tmpImgB = new Image(); tmpImgB.onload = function(){ sandbox.setUniform('u_foxSitClothResolution', tmpImgB.naturalWidth || tmpImgB.width, tmpImgB.naturalHeight || tmpImgB.height); }; tmpImgB.src = dataUrl;
+          }catch(e){}
+          // Enable after texture is loaded to avoid a frame of empty cloth
+          // Enable when either cloth texture reports loaded
+          var texObjStand = sandbox.textures && sandbox.textures['u_foxCloth'];
+          var texObjSit = sandbox.textures && sandbox.textures['u_foxSitCloth'];
+          var enableNow = function(){
+            _foxClothEnabledState = 1;
+            sandbox.setUniform('u_foxClothEnabled', 1.0);
+            // Nudge a uniform to force a redraw in some implementations
+            try{
+              var feather = 20.0;
+              sandbox.setUniform('u_foxFeather', feather + 0.001);
+              sandbox.setUniform('u_foxFeather', feather);
+            }catch(e){}
+            // Debug snapshot
+            try{
+              var keys = Object.keys(sandbox.textures || {});
+              console.log('textures after cloth enable:', keys);
+            }catch(e){}
+            if(foxClothStatusEl) foxClothStatusEl.textContent = 'on';
+          };
+          var hooked = false;
+          try{
+            if(texObjStand && typeof texObjStand.on === 'function'){ texObjStand.on('loaded', function(){ if(!hooked){ hooked=true; enableNow(); } }); }
+            if(texObjSit && typeof texObjSit.on === 'function'){ texObjSit.on('loaded', function(){ if(!hooked){ hooked=true; enableNow(); } }); }
+          }catch(e){}
+          if(!hooked){ setTimeout(enableNow, 80); }
         } else {
           console.warn('Failed to generate cloth texture');
         }
       }
+    });
+  }
+
+  // Test button: apply solid-color cloth to verify compositing path
+  if(foxClothTestBtn){
+    foxClothTestBtn.addEventListener('click', function(){
+      try{
+        var useSit = (typeof foxMode !== 'undefined' && foxMode === 1);
+        var c = document.createElement('canvas');
+        c.width = 1024; c.height = 1024;
+        var ctx = c.getContext('2d');
+        ctx.clearRect(0,0,c.width,c.height);
+        // draw solid pattern
+        ctx.fillStyle = '#cc3333';
+        ctx.fillRect(0,0,c.width,c.height);
+        // simple alpha circle mask
+        ctx.globalCompositeOperation = 'destination-in';
+        ctx.beginPath(); ctx.arc(c.width/2, c.height/2, c.width/2.2, 0, Math.PI*2); ctx.closePath();
+        ctx.fill();
+        // premultiply
+        try{
+          var imgData = ctx.getImageData(0,0,c.width,c.height);
+          var d = imgData.data;
+          for(var i=0;i<d.length;i+=4){ var a = d[i+3]/255; d[i]=Math.round(d[i]*a); d[i+1]=Math.round(d[i+1]*a); d[i+2]=Math.round(d[i+2]*a);} 
+          ctx.putImageData(imgData,0,0);
+        }catch(e){}
+        var dataUrl = c.toDataURL('image/png');
+        if(useSit){ sandbox.setUniform('u_foxSitCloth', dataUrl); } else { sandbox.setUniform('u_foxCloth', dataUrl); }
+        sandbox.setUniform('u_foxClothEnabled', 1.0);
+        _foxClothEnabledState = 1;
+        if(foxClothStatusEl) foxClothStatusEl.textContent = 'on';
+        console.log('Applied test cloth');
+      }catch(e){ console.warn('Test cloth apply failed:', e); }
     });
   }
 
@@ -736,6 +886,19 @@
       canvas.addEventListener('pointermove', window.__blockPointerMove, true);
       canvas.addEventListener('touchmove', window.__blockTouchMove, { capture: true, passive: false });
       sandbox.setUniform('u_foxMode', foxMode);
+      // If cloth is enabled, regenerate sitting cloth for correct mask
+      try{
+        if(_foxClothEnabledState > 0){
+          (async function(){
+            var dataUrl = await generateClothDataURL(true);
+            if(dataUrl){
+              sandbox.setUniform('u_foxSitCloth', dataUrl);
+              // nudge to redraw
+              var feather = 20.0; sandbox.setUniform('u_foxFeather', feather + 0.001); sandbox.setUniform('u_foxFeather', feather);
+            }
+          })();
+        }
+      }catch(e){}
     // 全局安裝事件阻擋，避免 GlslCanvas 內建更新 u_mouse 造成「貼齊」而非阻尼
     (function installGlobalBlockers(){
       if(!window.__blockersInstalled){
@@ -779,6 +942,19 @@
         canvas.removeEventListener('touchmove', window.__blockTouchMove, { capture: true });
       }
       sandbox.setUniform('u_foxMode', foxMode);
+      // If cloth is enabled, regenerate standing cloth for correct mask
+      try{
+        if(_foxClothEnabledState > 0){
+          (async function(){
+            var dataUrl = await generateClothDataURL(false);
+            if(dataUrl){
+              sandbox.setUniform('u_foxCloth', dataUrl);
+              // nudge to redraw
+              var feather = 20.0; sandbox.setUniform('u_foxFeather', feather + 0.001); sandbox.setUniform('u_foxFeather', feather);
+            }
+          })();
+        }
+      }catch(e){}
     }
   });
 
@@ -867,7 +1043,13 @@
   // 因為 GlslCanvas 只有在 shader 中出現多次 u_mouse 時才會自動更新。
   // 包裝 setMouse 以記錄最後設定的座標，供坐下錨點使用
   var _lastSetMouseX = null, _lastSetMouseY = null;
-  function setMouse(x,y){ sandbox.setUniform('u_mouseCustom', x, y); _lastSetMouseX = x; _lastSetMouseY = y; }
+  function setMouse(x,y){
+    // clamp to canvas drawingbuffer bounds to avoid off-canvas positions
+    var cx = Math.max(0, Math.min(canvas.width, x));
+    var cy = Math.max(0, Math.min(canvas.height, y));
+    sandbox.setUniform('u_mouseCustom', cx, cy);
+    _lastSetMouseX = cx; _lastSetMouseY = cy;
+  }
   // 坐下時每幀強制錨定位置，避免任何外部更新造成位移
   function enforceSitAnchor(){
     if(!movementEnabled){
@@ -1038,6 +1220,8 @@
     var dccuCanvas = document.getElementById('dccuCanvas');
     if(!dccuCanvas) return;
     var dccu = new GlslCanvas(dccuCanvas);
+    // expose instance for snapshot coordination
+    window.__dccuInstance = dccu;
     var dccuShaderSelect = document.getElementById('dccuShaderSelect');
     // Resize drawing buffer to match CSS size and DPR
     function resizeDCCU(){
