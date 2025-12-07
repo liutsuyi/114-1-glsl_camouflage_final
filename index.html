@@ -26,7 +26,8 @@
       position: absolute;
       top: 50%;
       left: 60%;
-      transform: translate(-50%, -50%);
+      /* 將 shader 畫面等比例放大到 120% */
+      transform: translate(-50%, -50%) scale(1.2);
       border-radius: 10px;
       box-shadow: 0 18px 40px rgba(0,0,0,0.6);
       background: #000;
@@ -45,7 +46,8 @@
       padding: 16px 18px;
       border-radius: 10px;
       box-shadow: 0 8px 28px rgba(6,10,8,0.6);
-      max-width: 240px;
+      /* 擴寬控制面板到約 140%（240 * 1.4 ≈ 336px） */
+      max-width: 336px;
       border: 1px solid rgba(30,30,30,0.04);
     }
 
@@ -277,15 +279,27 @@
     for(var i=0;i<6;i++){
       (function(idx){
         var row = document.createElement('div');
+        // 每列改為垂直排列，第一行放 label+上傳，第二行放「還原」按鈕，避免右側溢出
         row.style.display = 'flex';
-        row.style.alignItems = 'center';
-        row.style.gap = '8px';
+        row.style.flexDirection = 'column';
+        row.style.gap = '6px';
+        row.style.border = '1px solid rgba(0,0,0,0.06)';
+        row.style.borderRadius = '6px';
+        row.style.padding = '8px';
+
+        // 第一行：label + 還原按鈕（避免換行），第二行：上傳欄位
+        var topRow = document.createElement('div');
+        topRow.style.display = 'flex';
+        topRow.style.alignItems = 'center';
+        topRow.style.gap = '8px';
+        topRow.style.justifyContent = 'space-between';
 
         var label = document.createElement('div');
-        label.style.flex = '1';
+        label.style.flex = '0 0 auto';
         label.style.fontSize = '13px';
         label.style.color = '#2b231f';
-        label.textContent = (currentTextures[idx] && currentTextures[idx].length>0) ? currentTextures[idx] : ('（未設定 u_tex' + idx + '）');
+        // 簡化顯示：僅顯示 layer 名稱，避免路徑太長造成雜亂
+        label.textContent = 'layer' + idx;
         label.id = 'texLabel' + idx;
 
         var fileInput = document.createElement('input');
@@ -293,11 +307,18 @@
         fileInput.accept = 'image/*';
         fileInput.id = 'texFile' + idx;
         fileInput.style.fontSize = '12px';
+        fileInput.style.width = '100%';
+
+        // 第二行：僅放置「還原」按鈕靠左，避免超出右側
+        var bottomRow = document.createElement('div');
+        bottomRow.style.display = 'flex';
+        bottomRow.style.justifyContent = 'flex-start';
 
         var resetBtn = document.createElement('button');
         resetBtn.textContent = '還原';
         resetBtn.style.fontSize = '12px';
         resetBtn.title = '還原此圖層為預設來源';
+        resetBtn.style.padding = '4px 8px';
 
         fileInput.addEventListener('change', function(e){
           var f = this.files && this.files[0];
@@ -310,7 +331,7 @@
             currentTextures[idx] = dataUrl;
             canvas.setAttribute('data-textures', currentTextures.join(','));
             var lab = document.getElementById('texLabel' + idx);
-            if(lab) lab.textContent = f.name || ('u_tex' + idx);
+            if(lab) lab.textContent = 'layer' + idx;
             console.log('Replaced u_tex' + idx + ' with uploaded file:', f.name);
           };
           reader.readAsDataURL(f);
@@ -327,13 +348,15 @@
           }
           canvas.setAttribute('data-textures', currentTextures.join(','));
           var lab = document.getElementById('texLabel' + idx);
-          if(lab) lab.textContent = (orig && orig.length>0) ? orig : ('（未設定 u_tex' + idx + '）');
+          if(lab) lab.textContent = 'layer' + idx;
           console.log('Restored u_tex' + idx + ' to initial source');
         });
 
-        row.appendChild(label);
-        row.appendChild(fileInput);
-        row.appendChild(resetBtn);
+        topRow.appendChild(label);
+        topRow.appendChild(resetBtn);
+        bottomRow.appendChild(fileInput);
+        row.appendChild(topRow);
+        row.appendChild(bottomRow);
         container.appendChild(row);
       })(i);
     }
