@@ -121,7 +121,7 @@
   <!-- UI: focus & max blur sliders -->
   <div id="ui">
     <div style="margin-bottom:8px">
-      <label>焦距: <input id="focusSlider" type="range" min="0" max="1" step="0.01" value="0.0"></label>
+      <label>焦距 (控制對焦平面的遠近) <input id="focusSlider" type="range" min="0" max="1" step="0.01" value="0.0"></label>
     </div>
     <!-- Texture Set selector 暫時註解，不顯示也不執行；如需恢復，移除下方註解即可 -->
     <!--
@@ -136,10 +136,10 @@
     </div>
     -->
     <div>
-      <label>光圈: <input id="maxBlurSlider" type="range" min="0" max="1" step="0.01" value="0.5"></label>
+      <label>光圈 (控制景深的深淺) <input id="maxBlurSlider" type="range" min="0" max="1" step="0.01" value="0.5"></label>
     </div>
     <div style="margin-top:8px">
-      <label>Fox Size: <input id="foxSizeSlider" type="range" min="0.2" max="1.0" step="0.01" value="0.2"></label>
+      <label>Fox Size (初次啟動，拖拉後狐狸會出現) <input id="foxSizeSlider" type="range" min="0.2" max="1.0" step="0.01" value="0.2"></label>
       <div class="small">狐狸尺寸: <span id="foxSizeLabel">1%</span></div>
     </div>
     <div style="margin-top:8px">
@@ -148,15 +148,16 @@
     </div>
     <div style="margin-top:8px">
       <label style="display:flex;align-items:center;gap:8px"><input id="foxOverlayToggle" type="checkbox" checked> <span style="font-weight:500">Fox Overlay</span></label>
-      <div class="small">若勾選，狐狸會以 overlay 方式渲染於最前方，確保可見。</div>
+      <div class="small">維護模式：若勾選，狐狸會以 overlay 方式渲染於最前方，確保可見。</div>
+      <div class="small" style="margin-top:6px">方向鍵左右可切換圖層、上下可切換站立/坐下</div>
       <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
-        <button id="foxLayerBackBtn" title="向後一層">向後</button>
-        <button id="foxLayerForwardBtn" title="向前一層">向前</button>
+        <button id="foxLayerBackBtn" title="向後一層">圖層向後</button>
+        <button id="foxLayerForwardBtn" title="向前一層">圖層向前</button>
         <div class="small" style="margin-left:6px">目前圖層: <span id="foxLayerLabel">0</span></div>
       </div>
     </div>
     <div style="margin-top:8px">
-      <div style="font-weight:500; margin-bottom:4px">狐狸偽裝服</div>
+      <div style="font-weight:500; margin-bottom:4px">狐狸迷彩服</div>
       <div class="small">按下切換按鈕可決定狐狸穿上或脫去偽裝服，偽裝服會使用當前迷彩預覽（DCCU 或 NATO）。</div>
       <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
         <button id="foxClothWearBtn" type="button" style="padding:6px 10px">穿上/脫去偽裝服</button>
@@ -184,7 +185,7 @@
 
     <!-- DCCU Camouflage Preview Block -->
     <div style="margin-top:12px; border-top:1px solid rgba(0,0,0,0.04); padding-top:10px">
-      <label style="font-weight:600">DCCU 迷彩預覽</label>
+      <label style="font-weight:600">Camouflage 預覽</label>
       <div class="small">在此預覽並調整 DCCU shader 參數。</div>
       <div style="margin-top:8px">
         <label>預覽 Shader:
@@ -196,7 +197,7 @@
       </div>
       <canvas id="dccuCanvas" width="360" height="240" data-fragment-url="shader/dccu_camouflage.frag" style="width:100%; height:auto; border-radius:8px; box-shadow:0 8px 22px rgba(0,0,0,0.35); background:#000; display:block; margin-top:8px"></canvas>
       <div style="margin-top:10px">
-        <label>Scale: <input id="dccuScale" type="range" min="0.1" max="5.0" step="0.01" value="1.0"></label>
+        <label>Scale (初次啟動，拖拉後圖樣會出現) <input id="dccuScale" type="range" min="0.1" max="5.0" step="0.01" value="1.0"></label>
         <div class="small">圖樣密度縮放（最小 0.1，方塊可更大）</div>
       </div>
       <!-- 移除 Noise Amp 控制：效果不明顯，取消該參數 -->
@@ -715,6 +716,7 @@
       if(wearing){
         _foxClothEnabledState = 0;
         sandbox.setUniform('u_foxClothEnabled', 0.0);
+        if(foxClothStatusEl) foxClothStatusEl.textContent = 'off';
       } else {
         // Ensure fox is within view: center position before wearing
         try{
@@ -886,6 +888,7 @@
       canvas.addEventListener('pointermove', window.__blockPointerMove, true);
       canvas.addEventListener('touchmove', window.__blockTouchMove, { capture: true, passive: false });
       sandbox.setUniform('u_foxMode', foxMode);
+      if(foxModeLabelEl) foxModeLabelEl.textContent = 'sit';
       // If cloth is enabled, regenerate sitting cloth for correct mask
       try{
         if(_foxClothEnabledState > 0){
@@ -942,6 +945,7 @@
         canvas.removeEventListener('touchmove', window.__blockTouchMove, { capture: true });
       }
       sandbox.setUniform('u_foxMode', foxMode);
+      if(foxModeLabelEl) foxModeLabelEl.textContent = 'stand';
       // If cloth is enabled, regenerate standing cloth for correct mask
       try{
         if(_foxClothEnabledState > 0){
@@ -1010,6 +1014,7 @@
   // 以背景貼圖座標（UV 0..1）作為坐下錨點
   var sitAnchorUVx = null, sitAnchorUVy = null;
   sandbox.setUniform('u_foxMode', foxMode);
+  if(foxModeLabelEl) foxModeLabelEl.textContent = 'stand';
 
   // 漸進式跟隨：目標滑鼠座標（像素）與目前跟隨座標（像素）
   var _targetMouseX = null, _targetMouseY = null;
